@@ -34,12 +34,25 @@ export const createPaymentIntentForContract = catchAsync(async (req, res, next) 
     if (!contract.tasker?.stripePayoutsEnabled) return next(new AppError('Tasker Stripe onboarding incomplete or payouts disabled.', 400));
 
     const taskerStripeAccountId = contract.tasker.stripeAccountId;
-    const amountInCents = Math.round(contract.agreedCost * 100); // Convert cost to cents
+    const amountInCents = Math.round(contract.agreedCost * 100); // Total amount provider pays
     if (amountInCents <= 0) return next(new AppError('Invalid contract cost.', 400));
 
-    // Calculate the application fee based on the platform's percentage
+    // Calculate the application fee based on the platform's percentage and fixed fee
     const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-    const applicationFeeAmount = Math.round(amountInCents * (feePercentage / 100));
+    const fixedFeeCents = 500; // Define the fixed fee ($5.00) in cents
+
+    // Calculate percentage part
+    const percentageFee = Math.round(amountInCents * (feePercentage / 100));
+
+    // Calculate total application fee
+    const applicationFeeAmount = percentageFee + fixedFeeCents;
+
+    // Optional: Sanity check - ensure fee doesn't exceed total amount
+     if (applicationFeeAmount >= amountInCents) {
+        console.error(`Calculated fee (${applicationFeeAmount}) exceeds or equals total amount (${amountInCents}) for Contract ${contractId}.`);
+        // Decide how to handle: error out, or maybe cap fee at amount - 1 cent?
+        return next(new AppError('Platform fee calculation error. Please contact support.', 500));
+    }
 
     const paymentCurrency = 'cad';
 

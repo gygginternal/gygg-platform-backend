@@ -123,9 +123,18 @@ paymentSchema.pre('save', async function(next) {
     // Fetch platform fee percentage from environment variables, default to 0% if not set
     const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
 
+    // Fixed fees value defined 
+    const fixedFeeCents = 500; // $5.00 in cents
+    const percentageFee = Math.round(this.amount * (feePercentage / 100));
+    
     // Calculate application fee (rounded to nearest cent) and amount received by Tasker
-    this.applicationFeeAmount = Math.round(this.amount * (feePercentage / 100));
-    this.amountReceivedByPayee = this.amount - this.applicationFeeAmount;
+    this.applicationFeeAmount = percentageFee + fixedFeeCents;
+    this.amountReceivedByPayee = Math.max(0, this.amount - this.applicationFeeAmount);   
+    
+    // Optional: Log a warning if fee exceeds amount significantly
+    if (this.applicationFeeAmount >= this.amount) {
+      console.warn(`WARNING: Calculated applicationFeeAmount (${this.applicationFeeAmount}) meets or exceeds total amount (${this.amount}) for Payment ${this._id}`);
+    }
   }
 
   // Update timestamps for successful or refunded payment status
