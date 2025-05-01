@@ -1,313 +1,222 @@
+// Importing required modules
 import Post from '../models/Post.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
-// Optional: APIFeatures for advanced filtering/sorting/pagination
-// import APIFeatures from '../utils/apiFeatures.js';
+import mongoose from 'mongoose';
 
-// --- Utility function to check ownership or admin role ---
+// Utility function to check if the user is the owner of the post or has admin privileges
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
   if (resourceUserId.toString() !== requestingUser.id && !requestingUser.role.includes('admin')) {
     throw new AppError('You do not have permission to perform this action', 403);
   }
-  return true;
+  return true;  // Return true if the user is authorized
 };
 
-// --- Post Route Handlers ---
-
-// Get Feed (All Posts with Sorting)
+// Route handler to get the feed of posts, with optional sorting, pagination, and geolocation-based filtering
 export const getPostFeed = catchAsync(async (req, res, next) => {
   const { sort, lat, lng, distance, page, limit } = req.query;
   let query = Post.find();
 
-  // 1. Sorting
+  // Handle sorting based on query parameter
   if (sort === 'trending') {
-    // Basic Trending: Sort by likeCount descending (improve later)
+    // Sort by likeCount and createdAt for trending posts
     query = query.sort('-likeCount -createdAt');
   } else if (sort === 'near_me') {
-    // Geospatial Query for 'Near Me'
+    // If 'near me' sorting is selected, handle geospatial filtering
     if (!lat || !lng) {
-      return next(new AppError('Please provide your latitude (lat) and longitude (lng) for "near me" sorting.', 400));
+      return next(new AppError('Please provide latitude (lat) and longitude (lng) for "near me" sorting.', 400));
     }
-    const maxDistance = (distance * 1 || 10) * 1000; // Default 10km, convert to meters
-    query = query.find({
-      location: {
-        $nearSphere: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(lng), parseFloat(lat)] // Longitude first!
-          },
-          $maxDistance: maxDistance
-        }
-      }
+    const maxDistance = (distance * 1 || 10) * 1000;  // Default max distance is 10km in meters
+    query = query.where('location').near({
+      center: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+      maxDistance: maxDistance,
+      spherical: true
     });
-    // Geospatial queries don't always mix well with standard sort, but we can try adding secondary sort
-    query = query.sort('-createdAt'); // Sort nearby results by recent
-
-  } else { // Default: 'recents'
-    query = query.sort('-createdAt');
+    query = query.sort('-createdAt');  // Sort nearby results by recency
+  } else {
+    query = query.sort('-createdAt');  // Default sorting by most recent
   }
 
-  // 2. Pagination (Basic)
+  // Handle pagination
   const pageNum = page * 1 || 1;
-  const limitNum = limit * 1 || 20; // Default limit for posts
+  const limitNum = limit * 1 || 20;  // Default limit is 20 posts per page
   const skip = (pageNum - 1) * limitNum;
-  query = query.skip(skip).limit(limitNum);
+  query = query.skip(skip).limit(limitNum).select('-__v');  // Exclude __v field from the response
 
-  // 3. Field Limiting (Optional)
-  query = query.select('-__v'); // Exclude __v
-
-  // 4. Execute Query (Populate handled by model middleware)
+  // Execute the query and fetch posts
   const posts = await query;
 
-  res.status(200).json({
-    status: 'success',
-    results: posts.length,
-    data: {
-      posts,
-    },
-  });
+  // Return the response with posts data
+  res.status(200).json({ status: 'success', results: posts.length, data: { posts } });
 });
 
-
-// Get Single Post
+// Route handler to get a single post by ID
 export const getPost = catchAsync(async (req, res, next) => {
-  const post = await Post.findById(req.params.id).populate('comments.user', 'firstName lastName profileImage'); // Ensure comment user is populated
-
+  const post = await Post.findById(req.params.id);  // Find post by ID
   if (!post) {
-    return next(new AppError('No post found with that ID', 404));
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
   }
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      post,
-    },
-  });
+  res.status(200).json({ status: 'success', data: { post } });  // Return post data
 });
 
-// Create Post
+// Route handler to create a new post
 export const createPost = catchAsync(async (req, res, next) => {
-  const { content, media, tags, relatedGig, location } = req.body; // location expected as { coordinates: [lng, lat], address: 'optional string' }
-  const author = req.user.id;
+  const { content, media, tags, location } = req.body;
 
-  // Validate location format if provided
-  let locationData = undefined;
+  // Validate location if provided
+  let locationData;
   if (location && location.coordinates && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
-      locationData = {
-          type: 'Point',
-          coordinates: [parseFloat(location.coordinates[0]), parseFloat(location.coordinates[1])], // Ensure numbers
-          address: location.address || undefined
-      }
+    locationData = {
+      type: 'Point',
+      coordinates: [parseFloat(location.coordinates[0]), parseFloat(location.coordinates[1])],  // Ensure correct coordinate order
+      address: location.address  // Optional address
+    };
   }
 
+  // Create a new post with the provided data
   const newPost = await Post.create({
-    author,
+    author: req.user.id,
     content,
-    media, // Assuming media is an array of { url: '...', type: 'image/video' }
+    media,
     tags,
-    relatedGig, // Should be a valid Gig ObjectId if provided
     location: locationData
   });
 
-  res.status(201).json({
-    status: 'success',
-    data: {
-      post: newPost,
-    },
-  });
+  // Return the created post data
+  res.status(201).json({ status: 'success', data: { post: newPost } });
 });
 
-// Update Post (Author or Admin Only)
+// Route handler to update an existing post
 export const updatePost = catchAsync(async (req, res, next) => {
-  const post = await Post.findById(req.params.id);
-
+  const post = await Post.findById(req.params.id);  // Find the post by ID
   if (!post) {
-    return next(new AppError('No post found with that ID', 404));
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
   }
 
-  checkOwnershipOrAdmin(post.author, req.user); // Pass the author ID
+  // Check ownership or admin role before allowing update
+  checkOwnershipOrAdmin(post.author, req.user);
 
-  // Filter allowed fields
+  // Allowed fields for update
   const allowedUpdates = {};
-  const fieldsToUpdate = ['content', 'media', 'tags', 'relatedGig']; // Location update might need care
-  fieldsToUpdate.forEach(field => {
-    if (req.body[field] !== undefined) {
-      allowedUpdates[field] = req.body[field];
-    }
+  ['content', 'media', 'tags'].forEach(field => {
+    if (req.body[field] !== undefined) allowedUpdates[field] = req.body[field];
   });
 
-  const updatedPost = await Post.findByIdAndUpdate(req.params.id, allowedUpdates, {
-    new: true,
-    runValidators: true,
-  });
+  // Update the post with allowed fields
+  const updatedPost = await Post.findByIdAndUpdate(req.params.id, allowedUpdates, { new: true, runValidators: true });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      post: updatedPost,
-    },
-  });
+  // Return updated post data
+  res.status(200).json({ status: 'success', data: { post: updatedPost } });
 });
 
-// Delete Post (Author or Admin Only)
+// Route handler to delete a post
 export const deletePost = catchAsync(async (req, res, next) => {
-  const post = await Post.findById(req.params.id);
-
+  const post = await Post.findById(req.params.id);  // Find the post by ID
   if (!post) {
-    return next(new AppError('No post found with that ID', 404));
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
   }
 
-  checkOwnershipOrAdmin(post.author, req.user); // Pass the author ID
+  // Check ownership or admin role before allowing deletion
+  checkOwnershipOrAdmin(post.author, req.user);
 
+  // Delete the post from the database
   await Post.findByIdAndDelete(req.params.id);
 
-  res.status(204).json({
-    status: 'success',
-    data: null,
-  });
+  // Return success response
+  res.status(204).json({ status: 'success', data: null });
 });
 
-// --- Like / Unlike Post ---
+// Route handler to like a post
 export const likePost = catchAsync(async (req, res, next) => {
-  const postId = req.params.id;
-  const userId = req.user.id;
-
-  // Use $addToSet to prevent duplicate likes and update likeCount
-  const updatedPost = await Post.findByIdAndUpdate(
-    postId,
-    {
-      $addToSet: { likes: userId }, // Add user ID to likes array only if not already present
-      // We'll rely on the pre-save hook to update likeCount
-    },
-    { new: true } // Return the updated document
-  );
-
-  if (!updatedPost) {
-    return next(new AppError('No post found with that ID', 404));
-  }
-  // Manually trigger save to run the pre-save hook for likeCount update
-  await updatedPost.save({ validateBeforeSave: false });
-
-
-  res.status(200).json({
-    status: 'success',
-    message: 'Post liked',
-    data: {
-      likes: updatedPost.likes, // Send back the updated likes array
-      likeCount: updatedPost.likeCount
-    },
-  });
-});
-
-export const unlikePost = catchAsync(async (req, res, next) => {
-  const postId = req.params.id;
-  const userId = req.user.id;
-
-  // Use $pull to remove the user ID and update likeCount
-  const updatedPost = await Post.findByIdAndUpdate(
-    postId,
-    {
-      $pull: { likes: userId }, // Remove user ID from likes array
-      // Rely on pre-save hook for likeCount
-    },
+  // Update the post's likes array to include the current user
+  const post = await Post.findByIdAndUpdate(
+    req.params.id,
+    { $addToSet: { likes: req.user.id } },  // Add user ID to likes array if not already present
     { new: true }
   );
 
-  if (!updatedPost) {
-    return next(new AppError('No post found with that ID', 404));
+  if (!post) {
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
   }
-  // Manually trigger save to run the pre-save hook for likeCount update
-  await updatedPost.save({ validateBeforeSave: false });
 
+  // Trigger save to update likeCount via pre-save hook
+  await post.save({ validateBeforeSave: false });
 
-  res.status(200).json({
-    status: 'success',
-    message: 'Post unliked',
-     data: {
-      likes: updatedPost.likes,
-      likeCount: updatedPost.likeCount
-    },
-  });
+  // Return success response
+  res.status(200).json({ status: 'success', message: 'Post liked', data: { likeCount: post.likeCount } });
 });
 
+// Route handler to unlike a post
+export const unlikePost = catchAsync(async (req, res, next) => {
+  // Update the post's likes array to remove the current user
+  const post = await Post.findByIdAndUpdate(
+    req.params.id,
+    { $pull: { likes: req.user.id } },  // Remove user ID from likes array
+    { new: true }
+  );
 
-// --- Add Comment ---
+  if (!post) {
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
+  }
+
+  // Trigger save to update likeCount via pre-save hook
+  await post.save({ validateBeforeSave: false });
+
+  // Return success response
+  res.status(200).json({ status: 'success', message: 'Post unliked', data: { likeCount: post.likeCount } });
+});
+
+// Route handler to add a comment to a post
 export const addComment = catchAsync(async (req, res, next) => {
-  const postId = req.params.id;
-  const userId = req.user.id;
   const { text } = req.body;
-
   if (!text || text.trim() === '') {
-      return next(new AppError('Comment text cannot be empty', 400));
+    return next(new AppError('Comment text cannot be empty', 400));  // Validate that the comment is not empty
   }
 
-  const comment = {
-      user: userId,
-      text: text.trim(),
-      // createdAt is handled by default in schema
-  };
+  // Create a comment object with user and text
+  const comment = { user: req.user.id, text: text.trim() };
 
-  const updatedPost = await Post.findByIdAndUpdate(
-      postId,
-      { $push: { comments: comment } }, // Add new comment to the array
-      { new: true, runValidators: true } // Return updated post, run validators
-  ).populate('comments.user', 'firstName lastName profileImage'); // Populate user in the new comment
+  // Update the post with the new comment
+  const post = await Post.findByIdAndUpdate(
+    req.params.id,
+    { $push: { comments: comment } },
+    { new: true, runValidators: true }
+  ).populate('comments.user', 'firstName lastName profileImage');  // Populate user data for the comment
 
-  if (!updatedPost) {
-      return next(new AppError('No post found with that ID', 404));
+  if (!post) {
+    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
   }
-   // Manually trigger save to run the pre-save hook for commentCount update
-   await updatedPost.save({ validateBeforeSave: false });
 
-  res.status(201).json({
-      status: 'success',
-      data: {
-          post: updatedPost // Return the post with the new comment populated
-      }
-  });
+  // Trigger save to update commentCount via pre-save hook
+  await post.save({ validateBeforeSave: false });
+
+  // Return the updated post with the new comment
+  res.status(201).json({ status: 'success', data: { post } });
 });
 
-// --- Delete Comment (Comment Author, Post Author, or Admin) ---
+// Route handler to delete a comment from a post
 export const deleteComment = catchAsync(async (req, res, next) => {
   const { postId, commentId } = req.params;
-  const userId = req.user.id;
+  const post = await Post.findById(postId);  // Find the post by ID
 
-  const post = await Post.findById(postId);
   if (!post) {
-    return next(new AppError('Post not found', 404));
+    return next(new AppError('Post not found', 404));  // Handle if post not found
   }
 
-  // Find the comment within the post's comments array
-  const comment = post.comments.id(commentId); // Mongoose subdocument ID selector
+  // Find the comment by ID
+  const comment = post.comments.id(commentId);
   if (!comment) {
-    return next(new AppError('Comment not found', 404));
+    return next(new AppError('Comment not found', 404));  // Handle if comment not found
   }
 
-  // Check permissions: Comment author OR Post author OR Admin
-  const isCommentAuthor = comment.user.toString() === userId;
-  const isPostAuthor = post.author.toString() === userId;
-  const isAdmin = req.user.role.includes('admin');
-
-  if (!isCommentAuthor && !isPostAuthor && !isAdmin) {
+  // Check if the user is allowed to delete the comment (either the comment's author or an admin)
+  if (comment.user.toString() !== req.user.id && !req.user.role.includes('admin')) {
     return next(new AppError('You do not have permission to delete this comment', 403));
   }
 
-  // Remove the comment using $pull
-   const updatedPost = await Post.findByIdAndUpdate(
-      postId,
-      { $pull: { comments: { _id: commentId } } },
-      { new: true }
-  );
+  // Remove the comment from the post's comments array
+  comment.remove();
+  await post.save();  // Save the post after removal
 
-   // Manually trigger save to run the pre-save hook for commentCount update
-   await updatedPost.save({ validateBeforeSave: false });
-
-
-  res.status(200).json({ // 200 OK or 204 No Content are both acceptable
-    status: 'success',
-    message: 'Comment deleted',
-     data: {
-        commentCount: updatedPost.commentCount
-     }
-  });
+  res.status(204).json({ status: 'success', data: null });  // Return success response
 });

@@ -1,117 +1,123 @@
 import mongoose from 'mongoose';
 
+// Define the schema for a comment
 const commentSchema = new mongoose.Schema({
-  author: {
-    type: mongoose.Schema.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  text: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-}, { _id: true });
-
-const postSchema = new mongoose.Schema({
-  author: {
-    type: mongoose.Schema.ObjectId,
-    ref: 'User',
-    required: [true, 'A post must have an author.']
-  },
-  content: {
-    type: String,
-    required: [true, 'Post content cannot be empty.'],
-    trim: true,
-    maxlength: [2000, 'Post content cannot exceed 2000 characters.']
-  },
-  media: [{
-    type: String,
-    trim: true
-  }],
-  tags: [{
-    type: String,
-    trim: true,
-    lowercase: true
-  }],
-  likes: [{
-    type: mongoose.Schema.ObjectId,
-    ref: 'User'
-  }],
-  likeCount: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  comments: [commentSchema],
-  commentCount: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  location: {
-    type: {
-      type: String,
-      enum: ['Point']
+    // Reference to the author of the comment
+    author: {
+        type: mongoose.Schema.ObjectId,
+        ref: 'User', // Refers to the 'User' model
+        required: true, // Author is a required field
     },
-    coordinates: {
-      type: [Number],
-      index: '2dsphere'
+    // Text content of the comment
+    text: {
+        type: String,
+        required: true, // Comment text is mandatory
+        trim: true, // Removes extra spaces around the comment text
     },
-    address: {
-      type: String,
-      trim: true
+    // Timestamp for when the comment was created
+    createdAt: {
+        type: Date,
+        default: Date.now, // Defaults to the current date and time
     }
-  },
-  trendingScore: {
-    type: Number,
-    default: 0,
-    index: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    index: true
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
-}, {
-  timestamps: true
+}, { _id: true }); // Explicitly defining _id for comments to maintain uniqueness
+
+// Define the schema for a social post
+const socialPostSchema = new mongoose.Schema({
+    // Reference to the author of the post
+    author: {
+        type: mongoose.Schema.ObjectId,
+        ref: 'User', // Refers to the 'User' model
+        required: [true, 'A post must have an author.'], // Error message if author is missing
+        index: true, // Index for better search performance
+    },
+    // Content of the post (text-based)
+    content: {
+        type: String,
+        required: [true, 'Post content cannot be empty.'], // Ensures post content is not empty
+        trim: true, // Trims any whitespace around the content
+        maxlength: [2000, 'Post content cannot exceed 2000 characters.'], // Limits content to 2000 characters
+    },
+    // Media files associated with the post (URLs, image links, etc.)
+    media: [{
+        type: String,
+        trim: true, // Trims any extra spaces around media URLs
+    }],
+    // Tags associated with the post
+    tags: [{
+        type: String,
+        trim: true, // Trims spaces from tags
+        lowercase: true, // Converts tags to lowercase for uniformity
+        index: true, // Index for better search performance
+    }],
+    // List of users who liked the post
+    likes: [{
+        type: mongoose.Schema.ObjectId,
+        ref: 'User', // Refers to the 'User' model for liked users
+    }],
+    // Count of likes on the post
+    likeCount: {
+        type: Number,
+        default: 0, // Default to 0 likes
+        min: 0, // Like count can't go below 0
+    },
+    // List of comments on the post
+    comments: [commentSchema], // Embed the comment schema for each post
+    // Count of comments on the post
+    commentCount: {
+        type: Number,
+        default: 0, // Default to 0 comments
+        min: 0, // Comment count can't go below 0
+    },
+    // Geolocation data for the post (optional)
+    location: {
+        // Geospatial data with the 'Point' type
+        type: { type: String, enum: ['Point'] },
+        coordinates: {
+            type: [Number], // [longitude, latitude]
+            index: '2dsphere', // Index for geospatial queries
+        },
+        // Address associated with the location (optional)
+        address: {
+            type: String,
+            trim: true, // Trims extra spaces in the address
+        },
+    },
+    // Score indicating how "trending" the post is (used for sorting)
+    trendingScore: {
+        type: Number,
+        default: 0, // Default to 0, can be updated based on other factors
+        index: true, // Index for faster querying and sorting by trendingScore
+    },
+}, { timestamps: true }); // Automatically adds createdAt and updatedAt fields
+
+// Pre-save middleware to update likeCount and commentCount before saving the post
+socialPostSchema.pre('save', function(next) {
+    // If likes array is modified, update likeCount to match the number of likes
+    if (this.isModified('likes')) {
+        this.likeCount = this.likes.length;
+    }
+    // If comments array is modified, update commentCount to match the number of comments
+    if (this.isModified('comments')) {
+        this.commentCount = this.comments.length;
+    }
+    next(); // Proceed to save the document
 });
 
-// Indexes
-postSchema.index({ author: 1 });
-postSchema.index({ tags: 1 });
-
-// Middleware to update likeCount and commentCount
-postSchema.pre('save', function (next) {
-  if (this.isModified('likes')) {
-    this.likeCount = this.likes.length;
-  }
-  if (this.isModified('comments')) {
-    this.commentCount = this.comments.length;
-  }
-  next();
+// Pre-find middleware to auto-populate the author and comment author fields when querying posts
+socialPostSchema.pre(/^find/, function(next) {
+    this.populate({
+        path: 'author', // Auto-populate the 'author' field
+        select: 'firstName lastName profileImage role', // Select relevant fields of the author
+    })
+    .populate({
+        path: 'comments.author', // Auto-populate the 'author' field for each comment
+        select: 'firstName lastName profileImage', // Select relevant fields of the comment author
+    });
+    next(); // Proceed with the query
 });
 
-// Auto-populate author and comment author details
-postSchema.pre(/^find/, function (next) {
-  this.populate({
-    path: 'author',
-    select: 'firstName lastName profileImage role'
-  }).populate({
-    path: 'comments.author',
-    select: 'firstName lastName profileImage'
-  });
-  next();
-});
+// Create the Post model based on the socialPostSchema
+const Post = mongoose.model('Post', socialPostSchema);
 
-const Post = mongoose.model('Post', postSchema);
-
+// Export the Post model for use in other parts of the application
 export default Post;

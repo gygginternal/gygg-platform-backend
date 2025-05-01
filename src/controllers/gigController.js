@@ -1,72 +1,79 @@
 import mongoose from 'mongoose';
 import { Gig } from '../models/Gig.js';
-import Contract from '../models/Contract.js';
+import Contract from '../models/Contract.js'; // Import the Contract model
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
 
-// --- Utility function to check ownership or admin role ---
+// Utility function to check if the current user has ownership or is an admin
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
   if (resourceUserId.toString() !== requestingUser.id && !requestingUser.role.includes('admin')) {
-    throw new AppError('You do not have permission to perform this action', 403);
+    throw new AppError('You do not have permission to perform this action', 403); // Throw error if not authorized
   }
-  return true;
+  return true; // Return true if the user is authorized
 };
 
-// --- Gig Route Handlers ---
-
-// Get All Gigs
+// Handler to get all gigs with filtering, sorting, and pagination
 export const getAllGigs = catchAsync(async (req, res, next) => {
+  // Copy query parameters to modify them without affecting the original request object
   const queryObj = { ...req.query };
+
+  // Fields to exclude from query (pagination, sorting, etc.)
   const excludedFields = ['page', 'sort', 'limit', 'fields'];
   excludedFields.forEach(el => delete queryObj[el]);
 
+  // Initialize query
   let query = Gig.find(queryObj);
 
+  // Handle sorting: sort by specified fields or default to 'createdAt'
   if (req.query.sort) {
-    const sortBy = req.query.sort.split(',').join(' ');
-    query = query.sort(sortBy);
+    query = query.sort(req.query.sort.split(',').join(' ')); // Join fields for sorting
   } else {
-    query = query.sort('-createdAt');
+    query = query.sort('-createdAt'); // Default sorting by created date
   }
 
+  // Handle field selection: return only specified fields or exclude '__v'
   if (req.query.fields) {
-    const fields = req.query.fields.split(',').join(' ');
-    query = query.select(fields);
+    query = query.select(req.query.fields.split(',').join(' ')); // Select specific fields
   } else {
-    query = query.select('-__v');
+    query = query.select('-__v'); // Default: exclude version field
   }
 
+  // Handle pagination
   const page = req.query.page * 1 || 1;
   const limit = req.query.limit * 1 || 100;
   const skip = (page - 1) * limit;
   query = query.skip(skip).limit(limit);
 
+  // Execute query
   const gigs = await query;
 
+  // Return response with all gigs
   res.status(200).json({
     status: 'success',
-    results: gigs.length,
-    data: { gigs },
+    results: gigs.length, // Total number of gigs
+    data: { gigs }, // Data containing the gigs
   });
 });
 
-// Get Single Gig
+// Handler to get a single gig by ID
 export const getGig = catchAsync(async (req, res, next) => {
-  const gig = await Gig.findById(req.params.id);
+  const gig = await Gig.findById(req.params.id); // Find gig by ID
 
-  if (!gig) return next(new AppError('No gig found with that ID', 404));
+  // Check if gig exists
+  if (!gig) return next(new AppError('No gig found with that ID', 404)); // Return error if not found
 
+  // Return the gig details
   res.status(200).json({
     status: 'success',
-    data: { gig },
+    data: { gig }, // Data containing the gig
   });
 });
 
-// Create Gig
+// Handler to create a new gig
 export const createGig = catchAsync(async (req, res, next) => {
   const { title, description, category, subcategory, cost, location, isRemote, deadline, duration, skills } = req.body;
-  const postedBy = req.user.id;
 
+  // Create new gig document
   const newGig = await Gig.create({
     title,
     description,
@@ -78,112 +85,135 @@ export const createGig = catchAsync(async (req, res, next) => {
     deadline,
     duration,
     skills,
-    postedBy,
+    postedBy: req.user.id, // Associate the logged-in user as the poster
   });
 
+  // Return success response with new gig
   res.status(201).json({
     status: 'success',
     data: { gig: newGig },
   });
 });
 
-// Update Gig
+// Handler to update a gig by ID
 export const updateGig = catchAsync(async (req, res, next) => {
-  const gig = await Gig.findById(req.params.id).populate('postedBy');
+  const gig = await Gig.findById(req.params.id); // Find gig by ID
 
+  // Check if gig exists
   if (!gig) return next(new AppError('No gig found with that ID', 404));
 
-  checkOwnershipOrAdmin(gig.postedBy._id, req.user);
+  // Check if the requesting user is authorized (either owns the gig or is an admin)
+  checkOwnershipOrAdmin(gig.postedBy, req.user);
 
+  // Filter and prepare allowed updates
   const allowedUpdates = {};
   const fieldsToUpdate = ['title', 'description', 'category', 'subcategory', 'cost', 'location', 'isRemote', 'deadline', 'duration', 'skills'];
-
+  
+  // Loop through fields to update and add them to allowedUpdates if they exist in request body
   fieldsToUpdate.forEach(field => {
     if (req.body[field] !== undefined) {
       allowedUpdates[field] = req.body[field];
     }
   });
 
-  const updatedGig = await Gig.findByIdAndUpdate(req.params.id, allowedUpdates, {
-    new: true,
-    runValidators: true,
-  });
+  // Update the gig document
+  const updatedGig = await Gig.findByIdAndUpdate(req.params.id, allowedUpdates, { new: true, runValidators: true });
 
+  // Return success response with updated gig
   res.status(200).json({
     status: 'success',
     data: { gig: updatedGig },
   });
 });
 
-// Delete Gig
+// Handler to delete a gig by ID
 export const deleteGig = catchAsync(async (req, res, next) => {
-  const gig = await Gig.findById(req.params.id);
+  const gig = await Gig.findById(req.params.id); // Find gig by ID
 
+  // Check if gig exists
   if (!gig) return next(new AppError('No gig found with that ID', 404));
 
+  // Check if the requesting user is authorized (either owns the gig or is an admin)
   checkOwnershipOrAdmin(gig.postedBy, req.user);
 
-  if (['assigned', 'in-progress', 'completed'].includes(gig.status)) {
-    return next(new AppError('Cannot delete a gig that is assigned or has been worked on. Consider cancelling instead.', 400));
+  // Check gig status before deleting (cannot delete if it's assigned or completed)
+  if (['assigned', 'active', 'submitted', 'approved', 'completed'].includes(gig.status)) {
+    return next(new AppError('Cannot delete a gig that is active or completed.', 400)); // Return error if status is inappropriate
   }
 
+  // Delete the gig
   await Gig.findByIdAndDelete(req.params.id);
 
+  // Return success response (no content to return)
   res.status(204).json({
     status: 'success',
     data: null,
   });
 });
 
-// Accept Gig (with Contract creation and transaction)
+// Handler to accept a gig (including contract creation)
 export const acceptGig = catchAsync(async (req, res, next) => {
   const gigId = req.params.id;
-  const taskerId = req.user.id;
+  const taskerId = req.user.id; // Tasker accepting the gig
 
+  // Find the gig and populate its postedBy (provider)
   const gig = await Gig.findById(gigId).populate('postedBy', 'id');
+  
+  // Check if gig exists and if it's still open
   if (!gig) return next(new AppError('Gig not found', 404));
   if (gig.status !== 'open') return next(new AppError('Gig is no longer available', 400));
+  
+  // Check if the tasker is not the same as the provider (cannot accept their own gig)
   if (gig.postedBy.id === taskerId) return next(new AppError('You cannot accept your own gig', 400));
 
+  // Start MongoDB session for transaction
   const session = await mongoose.startSession();
   session.startTransaction();
 
   let newContract;
   try {
+    // Update gig status and assign tasker
     gig.assignedTo = taskerId;
-    gig.status = 'assigned';
+    gig.status = 'pending_payment'; // Change status to pending payment
     await gig.save({ session });
 
-    newContract = await Contract.create([{
+    // Create contract document for the gig
+    const contractData = [{
       gig: gigId,
       provider: gig.postedBy.id,
       tasker: taskerId,
       agreedCost: gig.cost,
-      status: 'pending_payment'
-    }], { session });
+      status: 'pending_payment' // Initial status for the contract
+    }];
+    
+    const createdContracts = await Contract.create(contractData, { session });
+    newContract = createdContracts[0]; // Get the created contract document
 
+    // Commit the transaction
     await session.commitTransaction();
-  } catch (error) {
-    await session.abortTransaction();
+    console.log(`Contract ${newContract._id} created successfully for Gig ${gigId}.`);
 
-    // --- Enhanced Logging ---
+  } catch (error) {
+    // Abort transaction if an error occurs
+    await session.abortTransaction();
     console.error('--- TRANSACTION FAILED ---');
     console.error('Original Error:', error);
-    console.error('Gig ID:', gigId);
-    console.error('Tasker ID:', taskerId);
-    console.error('Gig Data before save attempt:', gig.toObject ? gig.toObject() : gig);
-
     return next(new AppError('Failed to accept gig. Please try again.', 500));
   } finally {
+    // End the session
     session.endSession();
   }
 
+  // Re-fetch the gig to return the updated data (after transaction)
+  const updatedGig = await Gig.findById(gigId);
+
+  // Return success response with contract and updated gig details
   res.status(200).json({
     status: 'success',
-    message: 'Gig accepted successfully. Contract created.',
+    message: 'Gig accepted successfully. Contract created, awaiting payment.',
     data: {
-      contractId: newContract[0]._id,
-      gig,
-    },
+      contractId: newContract._id,
+      gig: updatedGig
+    }
   });
 });

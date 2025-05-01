@@ -2,26 +2,24 @@ import User from '../models/User.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
 
-// --- Helper Function to Filter Allowed Fields ---
+// --- Utility: Filters object keys to only allowed fields ---
 const filterObj = (obj, ...allowedFields) => {
   const newObj = {};
-  Object.keys(obj).forEach(el => {
+  Object.keys(obj).forEach((el) => {
     if (allowedFields.includes(el)) newObj[el] = obj[el];
   });
   return newObj;
 };
 
-// --- User Routes Handlers ---
-
-// Get Current User's Data
+// --- Controller: Get the current logged-in user ---
 export const getMe = (req, res, next) => {
-  req.params.id = req.user.id; // Set id from logged-in user for getUser
+  req.params.id = req.user.id; // Inject user ID for the getUser controller
   next();
 };
 
-// Update Current User's Data (Non-Password)
+// --- Controller: Update logged-in user's data (non-password fields only) ---
 export const updateMe = catchAsync(async (req, res, next) => {
-  // 1) Create error if user POSTs password data
+  // 1. Prevent password updates via this route
   if (req.body.password || req.body.passwordConfirm) {
     return next(
       new AppError(
@@ -31,63 +29,59 @@ export const updateMe = catchAsync(async (req, res, next) => {
     );
   }
 
-  // 2) Filter out unwanted fields names that are not allowed to be updated
-  const filteredBody = filterObj(req.body,
+  // 2. Filter allowed fields to update
+  const filteredBody = filterObj(
+    req.body,
     'firstName',
     'lastName',
     'email',
     'phoneNo',
     'address',
     'bio',
-    'profileImage', // Consider separate endpoint for image uploads later
+    'profileImage', // ⚠️ Consider moving image upload to a separate endpoint
     'hobbies',
     'peoplePreference',
     'availability',
     'ratePerHour'
-   );
-   // Add 'role' if you allow self-updating roles, but generally not recommended
+  );
 
-  // 3) Update user document
+  // 3. Update the user in DB
   const updatedUser = await User.findByIdAndUpdate(req.user.id, filteredBody, {
-    new: true, // Return the updated document
-    runValidators: true, // Run schema validators on update
+    new: true, // Return updated document
+    runValidators: true, // Run schema validators
   });
 
   res.status(200).json({
     status: 'success',
-    data: {
-      user: updatedUser,
-    },
+    data: { user: updatedUser },
   });
 });
 
-// Deactivate Current User Account
+// --- Controller: Deactivate the logged-in user's account (soft delete) ---
 export const deleteMe = catchAsync(async (req, res, next) => {
   await User.findByIdAndUpdate(req.user.id, { active: false });
 
-  res.status(204).json({ // 204 No Content
+  res.status(204).json({
     status: 'success',
     data: null,
   });
 });
 
-// --- Admin Routes Handlers ---
+// =================== ADMIN ROUTES ===================
 
-// Get All Users (Admin)
+// --- Controller: Get all users (Admin only) ---
 export const getAllUsers = catchAsync(async (req, res, next) => {
-  // Add filtering/pagination/sorting later if needed
   const users = await User.find();
 
+  // 💡 Future: Add filtering, pagination, sorting (e.g., with APIFeatures utility)
   res.status(200).json({
     status: 'success',
     results: users.length,
-    data: {
-      users,
-    },
+    data: { users },
   });
 });
 
-// Get Single User (Admin or using getMe)
+// --- Controller: Get a user by ID (Admin or getMe) ---
 export const getUser = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.params.id);
 
@@ -97,38 +91,39 @@ export const getUser = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: {
-      user,
-    },
+    data: { user },
   });
 });
 
-// Update User (Admin - Do NOT update passwords with this!)
+// --- Controller: Admin update user (non-password fields) ---
 export const updateUser = catchAsync(async (req, res, next) => {
-    // Filter req.body similar to updateMe if needed, prevent password updates here
-    const filteredBody = filterObj(req.body,
-      'firstName', 'lastName', 'email', 'phoneNo', 'role', 'active' // Example fields admin can update
-    );
+  // Filter the fields that admin is allowed to update
+  const filteredBody = filterObj(
+    req.body,
+    'firstName',
+    'lastName',
+    'email',
+    'phoneNo',
+    'role',
+    'active' // ⚠️ Be cautious with direct role or status changes
+  );
 
-    const user = await User.findByIdAndUpdate(req.params.id, filteredBody, {
-        new: true,
-        runValidators: true
-    });
+  const user = await User.findByIdAndUpdate(req.params.id, filteredBody, {
+    new: true,
+    runValidators: true,
+  });
 
-    if (!user) {
-        return next(new AppError('No user found with that ID', 404));
-    }
+  if (!user) {
+    return next(new AppError('No user found with that ID', 404));
+  }
 
-    res.status(200).json({
-        status: 'success',
-        data: {
-        user
-        }
-    });
+  res.status(200).json({
+    status: 'success',
+    data: { user },
+  });
 });
 
-
-// Delete User (Admin - Hard Delete, use with caution!)
+// --- Controller: Permanently delete a user (Admin only) ---
 export const deleteUser = catchAsync(async (req, res, next) => {
   const user = await User.findByIdAndDelete(req.params.id);
 
@@ -136,10 +131,11 @@ export const deleteUser = catchAsync(async (req, res, next) => {
     return next(new AppError('No user found with that ID', 404));
   }
 
-  // Note: Consider if associated data (gigs, posts, etc.) should be anonymized or deleted.
-  // This simple delete doesn't handle that.
+  // ⚠️ Future Consideration:
+  // - Cascade delete or anonymize related data (posts, gigs, messages, etc.)
+  // - Consider archiving data instead of hard delete
 
-  res.status(204).json({ // 204 No Content
+  res.status(204).json({
     status: 'success',
     data: null,
   });

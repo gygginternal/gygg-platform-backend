@@ -1,47 +1,50 @@
 import dotenv from 'dotenv';
-import app from './app.js'; // Import the configured Express app
-import connectDB from './config/db.js'; // Import the DB connection function
-
-// Configure dotenv to load environment variables
-// Important: Load config before other imports that might need process.env
+// Load environment variables from .env file
 dotenv.config({ path: './.env' });
 
+import mongoose from 'mongoose'; // Mongoose is required for graceful shutdown
+import app from './app.js'; // The main Express app
+import connectDB from './config/db.js'; // Database connection function
+
 // --- Handle Uncaught Exceptions (Sync Errors) ---
-// Should be placed at the very top to catch early errors
-process.on('uncaughtException', err => {
-  console.log('UNCAUGHT EXCEPTION! 💥 Shutting down...');
-  console.log(err.name, err.message);
-  // Shut down gracefully, giving the server time to finish requests (optional)
-  // Consider logging the error before exiting
-  process.exit(1); // Exit immediately (required for uncaught sync errors)
+process.on('uncaughtException', (err) => {
+    console.log('UNCAUGHT EXCEPTION! 💥 Shutting down...');
+    console.error(err.name, err.message); // Log error name and message
+    console.error(err); // Log the full error object for better context
+    process.exit(1); // Exit process with a failure code (1) to indicate the error
 });
 
-
 // --- Database Connection ---
-connectDB();
+connectDB(); // Connect to MongoDB database (handles its own errors and exits if failure)
 
-// --- Start Server ---
-const port = process.env.PORT || 3000; // Use port from .env or default to 3000
+// --- Start the Server ---
+const port = process.env.PORT || 3000; // Default port is 3000 if not specified in .env
 const server = app.listen(port, () => {
-  console.log(`App running on port ${port}... (Mode: ${process.env.NODE_ENV})`);
+    console.log(`App running on port ${port}... (Mode: ${process.env.NODE_ENV})`);
 });
 
 // --- Handle Unhandled Promise Rejections (Async Errors) ---
-process.on('unhandledRejection', err => {
-  console.log('UNHANDLED REJECTION! 💥 Shutting down...');
-  console.log(err.name, err.message);
-  // Close server gracefully, allowing pending requests to finish
-  server.close(() => {
-    // Consider logging the error before exiting
-    process.exit(1); // Exit after server is closed
-  });
+process.on('unhandledRejection', (err) => {
+    console.log('UNHANDLED REJECTION! 💥 Shutting down...');
+    console.error(err.name, err.message); // Log error name and message
+    console.error(err); // Log the full error for debugging
+
+    // Gracefully shut down the server to ensure all requests are finished
+    server.close(() => {
+        process.exit(1); // Exit after server is closed
+    });
 });
 
-// --- Handle SIGTERM for graceful shutdown (e.g., from Heroku/Docker) ---
+// --- Handle SIGTERM for Graceful Shutdown (e.g., from Heroku/Docker) ---
 process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM RECEIVED. Shutting down gracefully');
-  server.close(() => {
-    console.log('💥 Process terminated!');
-    // No need to process.exit(1) here, SIGTERM implies shutdown
-  });
+    console.log('👋 SIGTERM RECEIVED. Shutting down gracefully...');
+    server.close(() => {
+        console.log('💥 Process terminated!');
+        
+        // Close MongoDB connection gracefully before exiting
+        mongoose.connection.close(false, () => {
+            console.log('MongoDB connection closed.');
+            process.exit(0); // Exit process cleanly with code 0 (success)
+        });
+    });
 });

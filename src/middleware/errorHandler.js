@@ -1,57 +1,67 @@
+// utils/globalErrorHandler.js
+
 import AppError from '../utils/AppError.js';
 
-// --- Error Handling Functions for Specific Mongoose/JWT Errors ---
+// --- Specific Error Handlers ---
 
-const handleCastErrorDB = (err) => {
-  const message = `Invalid ${err.path}: ${err.value}.`;
-  return new AppError(message, 400); // 400 Bad Request
-};
+// Handles invalid MongoDB ObjectID (e.g., malformed _id)
+const handleCastErrorDB = (err) =>
+  new AppError(`Invalid ${err.path}: ${err.value}.`, 400);
 
+// Handles duplicate field errors from MongoDB
 const handleDuplicateFieldsDB = (err) => {
-  // Extract value from the error message using regex
-  const value = err.errmsg.match(/(["'])(\\?.)*?\1/)[0];
-  const message = `Duplicate field value: ${value}. Please use another value!`;
-  return new AppError(message, 400); // 400 Bad Request
+  // Use regex to safely extract duplicated value from error message
+  const valueMatch = err.message.match(/(["'])(?:(?=(\\?))\2.)*?\1/);
+  const value = valueMatch ? valueMatch[0] : 'value'; // Fallback if no match
+
+  const message = `Duplicate field ${value}. Please use another value!`;
+  return new AppError(message, 400);
 };
 
+// Handles Mongoose validation errors (e.g., required field missing)
 const handleValidationErrorDB = (err) => {
-  // Extract error messages from all validation errors
-  const errors = Object.values(err.errors).map(el => el.message);
+  const errors = Object.values(err.errors).map((el) => el.message);
   const message = `Invalid input data. ${errors.join('. ')}`;
-  return new AppError(message, 400); // 400 Bad Request
+  return new AppError(message, 400);
 };
 
-const handleJWTError = () => new AppError('Invalid token. Please log in again!', 401); // 401 Unauthorized
+// Handles invalid JWT token
+const handleJWTError = () =>
+  new AppError('Invalid token. Please log in again!', 401);
 
-const handleJWTExpiredError = () => new AppError('Your token has expired! Please log in again.', 401); // 401 Unauthorized
+// Handles expired JWT token
+const handleJWTExpiredError = () =>
+  new AppError('Your token has expired! Please log in again.', 401);
 
-// --- Environment-Specific Error Sending Functions ---
+// --- Error Response Formatters ---
 
+// Sends full error details in development environment
 const sendErrorDev = (err, res) => {
-  // Send detailed error information in development
+  console.error('DEVELOPMENT ERROR 💥:', err);
+
   res.status(err.statusCode).json({
     status: err.status,
-    error: err, // Send full error object
+    error: err,
     message: err.message,
-    stack: err.stack // Send stack trace
+    stack: err.stack,
   });
 };
 
+// Sends concise error message in production environment
 const sendErrorProd = (err, res) => {
-  // Operational, trusted error: send message to client
+  // Operational (trusted) error: show message to client
   if (err.isOperational) {
     res.status(err.statusCode).json({
       status: err.status,
-      message: err.message
+      message: err.message,
     });
-  // Programming or other unknown error: don't leak error details
   } else {
-    // 1) Log error
-    console.error('ERROR 💥', err);
-    // 2) Send generic message
+    // Unknown or programming error: log and send generic message
+    console.error('PRODUCTION ERROR 💥:', err);
+
     res.status(500).json({
       status: 'error',
-      message: 'Something went very wrong!'
+      message: 'Something went very wrong!',
     });
   }
 };
@@ -59,25 +69,27 @@ const sendErrorProd = (err, res) => {
 // --- Global Error Handling Middleware ---
 
 const globalErrorHandler = (err, req, res, next) => {
-  // Set default status code and status if not already defined
+  // Set default values if missing
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  // Determine environment and call appropriate error sending function
+  // Send detailed error in development mode
   if (process.env.NODE_ENV === 'development') {
     sendErrorDev(err, res);
+
+  // Handle known errors and send generic messages in production
   } else if (process.env.NODE_ENV === 'production') {
-    let error = { ...err }; // Create a copy to avoid modifying original err object
-    error.message = err.message; // Ensure message property is copied correctly
+    let error = { ...err }; // Clone to avoid mutating the original
+    error.message = err.message; // Ensure message is preserved
 
-    // Handle specific Mongoose/JWT errors and convert them to operational AppErrors
-    if (err.name === 'CastError') error = handleCastErrorDB(err); // Invalid ID format
-    if (err.code === 11000) error = handleDuplicateFieldsDB(err); // Duplicate key
-    if (err.name === 'ValidationError') error = handleValidationErrorDB(err); // Mongoose validation
-    if (err.name === 'JsonWebTokenError') error = handleJWTError(); // Invalid JWT signature
-    if (err.name === 'TokenExpiredError') error = handleJWTExpiredError(); // Expired JWT
+    // Handle specific known errors
+    if (err.name === 'CastError') error = handleCastErrorDB(err);
+    if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+    if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
+    if (err.name === 'JsonWebTokenError') error = handleJWTError();
+    if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
 
-    // Send the processed (or original if not handled above) error in production
+    // Send response
     sendErrorProd(error, res);
   }
 };

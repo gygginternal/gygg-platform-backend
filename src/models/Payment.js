@@ -1,104 +1,145 @@
 import mongoose from 'mongoose';
 
+// Define the payment schema
 const paymentSchema = new mongoose.Schema({
+  // Contract related to the payment
   contract: {
     type: mongoose.Schema.ObjectId,
     ref: 'Contract',
-    required: [true, 'Payment must be linked to a contract.'],
-    unique: true
+    required: [true, 'A payment must be linked to a contract.'],
+    unique: true,
+    index: true // Index for better query performance
   },
+
+  // Gig related to the payment
   gig: {
     type: mongoose.Schema.ObjectId,
     ref: 'Gig',
-    required: true
+    required: [true, 'Payment must be linked to a gig.']
   },
-  provider: {
+
+  // Payer: Provider making the payment
+  payer: {
     type: mongoose.Schema.ObjectId,
     ref: 'User',
-    required: true
+    required: [true, 'A payment must have a payer.'],
+    index: true // Index to search quickly by payer
   },
-  tasker: {
+
+  // Payee: Tasker receiving the payment
+  payee: {
     type: mongoose.Schema.ObjectId,
     ref: 'User',
-    required: true
+    required: [true, 'A payment must have a payee.'],
+    index: true // Index to search quickly by payee
   },
+
+  // Total payment amount (in cents)
   amount: {
     type: Number,
     required: [true, 'Payment amount is required.'],
-    min: [0, 'Amount cannot be negative.']
   },
+
+  // Currency used for the payment (defaults to 'CAD')
   currency: {
     type: String,
     required: true,
-    default: 'usd'
+    default: 'cad',
   },
+
+  // Platform's application fee in cents
+  applicationFeeAmount: {
+    type: Number,
+    required: true,
+    default: 0, // Default to 0 if not specified
+  },
+
+  // Amount actually received by the Tasker (after deducting the platform fee)
+  amountReceivedByPayee: {
+    type: Number,
+    required: true,
+  },
+
+  // Status of the payment process
   status: {
     type: String,
     enum: [
-      'pending_funding',
-      'escrow_funded',
-      'payout_initiated',
-      'payout_completed',
-      'payout_failed',
-      'refund_initiated',
-      'refunded',
-      'dispute_hold'
+      'pending_contract', 'requires_payment_method', 'processing',
+      'succeeded', // Payment successful, funds transferred to Tasker's Stripe balance
+      'failed', 'cancelled', 'refund_pending', 'refunded',
     ],
+    default: 'pending_contract',
     required: true,
-    default: 'pending_funding'
+    index: true, // Index to search quickly by status
   },
+
+  // Type of payment method used (Stripe, Credit Card, etc.)
   paymentMethodType: {
     type: String,
-    required: true
   },
+
+  // --- Stripe Specific Fields ---
   stripePaymentIntentId: {
     type: String,
     index: true,
-    sparse: true
+    unique: true,
+    sparse: true, // This field might be missing in some payments, so it is sparse.
   },
+
   stripeChargeId: {
     type: String,
     index: true,
-    sparse: true
   },
+
   stripeTransferId: {
     type: String,
     index: true,
-    sparse: true
+    sparse: true, // This field might not exist for all payments
   },
-  stripeDestinationAccountId: {
-    type: String
+
+  stripeRefundId: {
+    type: String,
+    index: true,
   },
-  interacReference: {
-    type: String
+
+  // Tasker's Stripe Connected Account ID
+  stripeConnectedAccountId: {
+    type: String,
+    required: true,
+    index: true,
   },
-  interacSenderEmail: {
-    type: String
-  },
-  interacRecipientEmail: {
-    type: String
-  },
-  escrowFundedAt: { type: Date },
-  payoutInitiatedAt: { type: Date },
-  payoutCompletedAt: { type: Date },
-  refundedAt: { type: Date },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+
+  // --- Timestamps ---
+  succeededAt: { type: Date }, // Timestamp for when the payment was successful
+  refundedAt: { type: Date }, // Timestamp for when the payment was refunded
 }, {
-  timestamps: true
+  timestamps: true, // Automatically manage createdAt and updatedAt fields
 });
 
-// Indexes
-paymentSchema.index({ contract: 1 }, { unique: true });
-paymentSchema.index({ provider: 1, status: 1 });
-paymentSchema.index({ tasker: 1, status: 1 });
+// Pre-save hook to calculate fees and update timestamps when the payment is saved
+paymentSchema.pre('save', async function(next) {
+  // Calculate platform fee and amount received by Tasker if the amount or status is modified
+  if (this.isModified('amount') || this.isNew) {
+    // Fetch platform fee percentage from environment variables, default to 0% if not set
+    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
 
+    // Calculate application fee (rounded to nearest cent) and amount received by Tasker
+    this.applicationFeeAmount = Math.round(this.amount * (feePercentage / 100));
+    this.amountReceivedByPayee = this.amount - this.applicationFeeAmount;
+  }
+
+  // Update timestamps for successful or refunded payment status
+  if (this.isModified('status')) {
+    if (this.status === 'succeeded' && !this.succeededAt) {
+      this.succeededAt = Date.now();
+    } else if (this.status === 'refunded' && !this.refundedAt) {
+      this.refundedAt = Date.now();
+    }
+  }
+
+  next(); // Proceed to save the document
+});
+
+// Create and export the Payment model based on the schema
 const Payment = mongoose.model('Payment', paymentSchema);
-
 export default Payment;

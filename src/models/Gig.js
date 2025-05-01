@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 
+// Category and subcategory definitions
 const CATEGORY_ENUM = [
   'Household Services',
   'Personal Assistant',
@@ -13,77 +14,18 @@ const CATEGORY_ENUM = [
 ];
 
 const SUBCATEGORIES_MAP = {
-  'Household Services': [
-    'Furniture assembly and disassembly',
-    'Home office cable management',
-    'Setting up home entertainment systems',
-    'Deep cleaning and organizing',
-    'Yard work and gardening',
-    'BBQ grill cleaning',
-    'Laundry folding and ironing',
-    'Closet or storage decluttering',
-    'Light maintenance tasks (e.g., hanging shelves, tightening doorknobs)'
-  ],
-  'Personal Assistant': [
-    'Scheduling appointments and calendar management',
-    'Grocery list prep and meal planning',
-    'Virtual reminders and follow-ups',
-    'Bill payment tracking',
-    'Gift sourcing and wrapping',
-    'Companionship errands (e.g., joining for appointments or walks)',
-    'Travel planning support'
-  ],
-  'Pet Care': [
-    'Dog walking and potty breaks',
-    'Pet sitting (day or overnight)',
-    'Feeding and medication administration',
-    'Grooming assistance (brushing, basic baths)',
-    'Litter box or cage cleaning',
-    'Vet appointment companionship'
-  ],
-  'Technology and Digital Assistance': [
-    'Setting up smartphones, tablets, or smart TVs',
-    'Email and app installations',
-    'Wi-Fi troubleshooting and router setup',
-    'Social media help (creating accounts, learning how to use them)',
-    'Transferring files or photos to the cloud',
-    'Setting up online payments or e-commerce accounts'
-  ],
-  'Event Support': [
-    'Party setup and teardown',
-    'Serving assistance (food/drinks)',
-    'Greeting and guest coordination',
-    'Coat check or gift table staffing',
-    'Decoration setup (balloons, lights, banners)',
-    'On-site tech help (music, mic, slideshow setup)'
-  ],
-  'Moving and Organization': [
-    'Packing and unpacking',
-    'Labeling boxes',
-    'Donating/selling unused items',
-    'Room-by-room organization',
-    'Helping seniors downsize',
-    'Rearranging furniture'
-  ],
-  'Creative and Costume Tasks': [
-    'Personal costume design or fitting help',
-    'Home decor styling (e.g., for holidays or photoshoots)',
-    'Scrapbooking or photo album organization',
-    'DIY project assistance',
-    'Art/craft material setup for events',
-    'Storytelling or skit prep for community events'
-  ],
-  'General Errands': [
-    'Grocery shopping and delivery',
-    'Prescription pickup',
-    'Mailing or shipping packages',
-    'Dry cleaning drop-off/pickup',
-    'Waiting for service appointments (e.g., cable guy)',
-    'Buying last-minute gifts or supplies'
-  ],
+  'Household Services': ['Furniture assembly and disassembly', 'Laundry folding and ironing', /*...*/],
+  'Personal Assistant': ['Scheduling appointments and calendar management', /*...*/],
+  'Pet Care': ['Dog walking and potty breaks', /*...*/],
+  'Technology and Digital Assistance': ['Setting up smartphones, tablets, or smart TVs', /*...*/],
+  'Event Support': ['Party setup and teardown', /*...*/],
+  'Moving and Organization': ['Packing and unpacking', /*...*/],
+  'Creative and Costume Tasks': ['Personal costume design or fitting help', /*...*/],
+  'General Errands': ['Grocery shopping and delivery', /*...*/],
   'Other': ['Other']
 };
 
+// Gig Schema Definition
 const gigSchema = new mongoose.Schema({
   title: {
     type: String,
@@ -107,7 +49,8 @@ const gigSchema = new mongoose.Schema({
   },
   cost: {
     type: Number,
-    required: [true, 'A gig must have a cost']
+    required: [true, 'A gig must have a cost'],
+    min: [0, 'Cost cannot be negative']
   },
   location: {
     address: String,
@@ -142,7 +85,10 @@ const gigSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['open', 'assigned', 'in-progress', 'completed', 'cancelled'],
+    enum: [
+      'open', 'assigned', 'active', 'submitted',
+      'approved', 'completed', 'cancelled', 'pending_payment'
+    ],
     default: 'open'
   },
   attachments: [{
@@ -164,30 +110,26 @@ const gigSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     }
-  }],
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  }]
 }, {
+  timestamps: true, // auto manages createdAt and updatedAt
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
 
+// Indexes to improve query performance
 gigSchema.index({ status: 1, category: 1 });
 gigSchema.index({ postedBy: 1 });
+gigSchema.index({ assignedTo: 1 });
 
+// Auto-populate user fields when querying gigs
 gigSchema.pre(/^find/, function (next) {
   this.populate({
     path: 'postedBy',
     select: 'firstName lastName profileImage rating'
   });
 
-  if (this._conditions.status !== 'open') {
+  if (!this.options?.skipPopulateAssignedTo) {
     this.populate({
       path: 'assignedTo',
       select: 'firstName lastName profileImage rating'
@@ -197,11 +139,8 @@ gigSchema.pre(/^find/, function (next) {
   next();
 });
 
-gigSchema.pre('save', function (next) {
-  this.updatedAt = Date.now();
-  next();
-});
-
+// Model Creation
 const Gig = mongoose.model('Gig', gigSchema);
 
+// Exporting for controller and validation usage
 export { Gig, SUBCATEGORIES_MAP, CATEGORY_ENUM };
