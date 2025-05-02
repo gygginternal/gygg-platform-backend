@@ -15,6 +15,7 @@ import gigRouter from './routes/gigRoutes.js';
 import postRouter from './routes/postRoutes.js';
 import chatRouter from './routes/chatRoutes.js';
 import paymentRouter from './routes/paymentRoutes.js'; // Contains non-webhook payment routes
+import contractRouter from './routes/contractRoutes.js';
 import reviewRouter from './routes/reviewRoutes.js'; // Import review routes for later implementation
 
 // Import Stripe Webhook handler directly
@@ -88,6 +89,9 @@ app.use('/api/v1/chat', chatRouter); // Manages chat between users (messages, ch
 
 // Mount Payment Routes (Excluding Webhook Routes)
 app.use('/api/v1/payments', paymentRouter); // Handles payment-related actions like creating intents, refunds
+
+// Mount Contract Routes
+app.use('/api/v1/contracts', contractRouter); // Handles contract related actions
 
 // Mount Review Routes
 app.use('/api/v1/reviews', reviewRouter); // Handles review creation, management, and display
