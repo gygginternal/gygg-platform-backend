@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import User from '../models/User.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
-import sendEmail from '../utils/email.js';
+// import sendEmail from '../utils/email.js';
 
 // --------------------
 // Utility: Sign JWT

@@ -3,6 +3,7 @@ import { Gig } from '../models/Gig.js';
 import Contract from '../models/Contract.js'; // Import the Contract model
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
+import User from '../models/User.js'; // For Matching Gigs based on hobby and personality 
 
 // Utility function to check if the current user has ownership or is an admin
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
@@ -216,4 +217,38 @@ export const acceptGig = catchAsync(async (req, res, next) => {
       gig: updatedGig
     }
   });
+});
+
+// Matching gigs based on personality of the provider with the tasker
+export const matchGigsForTasker = catchAsync(async (req, res, next) => {
+  const tasker = req.user;
+  const taskerHobbies = tasker.hobbies || [];
+  const taskerPreference = tasker.peoplePreference || '';
+  const taskerId = tasker._id;
+
+  const pipeline = [];
+  pipeline.push({ $match: { status: 'open', postedBy: { $ne: taskerId } } }); // Match open gigs not by self
+  pipeline.push({ $lookup: { from: 'users', localField: 'postedBy', foreignField: '_id', as: 'providerInfo' } }); // Get provider info
+  pipeline.push({ $unwind: { path: '$providerInfo', preserveNullAndEmptyArrays: true } }); // Unwind provider
+
+  // Filter based on Provider's profile vs Tasker's preferences
+  const matchOrConditions = [];
+  if (taskerPreference.trim()) { matchOrConditions.push({ 'providerInfo.peoplePreference': { $regex: new RegExp(taskerPreference.trim(), 'i') } }); }
+  if (taskerHobbies.length > 0) { matchOrConditions.push({ 'providerInfo.hobbies': { $in: taskerHobbies } }); }
+  if (matchOrConditions.length > 0) { pipeline.push({ $match: { $or: matchOrConditions } }); }
+  else { console.log(`Tasker ${taskerId} has no preferences. Showing all open gigs.`); }
+
+  // Calculate custom match score
+  pipeline.push({ $addFields: { matchScore: { $add: [ { $cond: [ { $gt: [ { $size: { $ifNull: [ { $setIntersection: ["$providerInfo.hobbies", taskerHobbies] }, [] ] } }, 0 ] }, 5, 0 ] }, { $cond: [ { $regexMatch: { input: "$providerInfo.peoplePreference", regex: new RegExp(taskerPreference.trim(), 'i') } }, 10, 0 ] }, { $ifNull: [ "$providerInfo.rating", 0 ] } ] } } });
+  // Sorting
+  pipeline.push({ $sort: { matchScore: -1, createdAt: -1 } });
+  // Pagination
+  const page = req.query.page * 1 || 1; const limit = req.query.limit * 1 || 10; const skip = (page - 1) * limit;
+  pipeline.push({ $skip: skip }); pipeline.push({ $limit: limit });
+  // Projection
+  pipeline.push({ $project: { _id: 1, title: 1, description: 1, category: 1, cost: 1, location: 1, isRemote: 1, createdAt: 1, status: 1, matchScore: 1, providerInfo: { _id: "$providerInfo._id", firstName: "$providerInfo.firstName", lastName: "$providerInfo.lastName", fullName: "$providerInfo.fullName", profileImage: "$providerInfo.profileImage", rating: "$providerInfo.rating", peoplePreference: "$providerInfo.peoplePreference", hobbies: "$providerInfo.hobbies" } } });
+
+  console.log('Executing Tasker->Gig Match Pipeline:', JSON.stringify(pipeline));
+  const matchedGigs = await Gig.aggregate(pipeline);
+  res.status(200).json({ status: 'success', results: matchedGigs.length, data: { gigs: matchedGigs } });
 });

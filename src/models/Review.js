@@ -43,7 +43,6 @@ const reviewSchema = new mongoose.Schema({
 });
 
 // Indexes
-reviewSchema.index({ contract: 1 }, { unique: true });
 reviewSchema.index({ reviewee: 1 });
 reviewSchema.index({ reviewer: 1 });
 reviewSchema.index({ gig: 1 });

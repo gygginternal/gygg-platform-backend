@@ -1,54 +1,171 @@
 import express from 'express';
+import { body, param, query } from 'express-validator';
+import validateRequest from '../middleware/validateRequest.js';
 import {
-  getAllGigs,    // Function to retrieve all gigs
-  getGig,        // Function to get a specific gig by its ID
-  createGig,     // Function to create a new gig
-  updateGig,     // Function to update an existing gig
-  deleteGig,     // Function to delete a gig
-  acceptGig,     // Function for a tasker to accept a gig
+  getAllGigs,           // Retrieve all gigs
+  getGig,               // Retrieve a specific gig by ID
+  createGig,            // Create a new gig
+  updateGig,            // Update a gig by ID
+  deleteGig,            // Delete a gig by ID
+  acceptGig,            // Tasker accepts a gig
+  matchGigsForTasker    // Match gigs to a tasker based on their hobbies and personality traits
 } from '../controllers/gigController.js';
-import { protect, restrictTo } from '../controllers/authController.js'; // Middleware to protect routes that require authentication and restrict roles
+
+import {
+  protect,
+  restrictTo,
+} from '../controllers/authController.js'; // Auth middlewares to secure and authorize access
 
 const router = express.Router();
 
 /**
- * --- Protect Routes ---
- * All routes below this middleware require the user to be logged in.
+ * ===============================
+ *      VALIDATION DEFINITIONS
+ * ===============================
+ * Reusable field validation rules for gig creation and updates.
  */
-router.use(protect); // Protect all routes below this middleware (user must be logged in)
+
+// Required validation for creating a gig
+const gigBodyValidation = [
+  body('title').notEmpty().trim().escape().isLength({ max: 100 }),
+  body('description').notEmpty().trim().escape(),
+  body('category').notEmpty().isIn([
+    'Household Services', 'Personal Assistant', 'Pet Care', 'Technology and Digital Assistance',
+    'Event Support', 'Moving and Organization', 'Creative and Costume Tasks', 'General Errands', 'Other'
+  ]),
+  body('subcategory').optional().trim().escape(),
+  body('cost').isNumeric().toFloat({ min: 0.01 }).withMessage('Cost must be a positive number'),
+  body('location').optional().isObject(),
+  body('location.address').optional({ checkFalsy: true }).trim().escape(),
+  body('location.city').optional({ checkFalsy: true }).trim().escape(),
+  body('location.state').optional({ checkFalsy: true }).trim().escape(),
+  body('location.postalCode').optional({ checkFalsy: true }).trim().escape(),
+  body('location.country').optional({ checkFalsy: true }).trim().escape(),
+  body('isRemote').optional().isBoolean().toBoolean(),
+  body('deadline').optional({ checkFalsy: true }).isISO8601().toDate(),
+  body('duration').optional({ checkFalsy: true }).isNumeric().toFloat({ min: 0.1 }),
+  body('skills').optional().isArray(),
+  body('skills.*').optional().isString().trim().escape(),
+];
+
+// Optional validation for updating a gig
+const optionalGigBodyValidation = [
+  body('title').optional().trim().escape().isLength({ max: 100 }),
+  body('description').optional().trim().escape(),
+  body('category').optional().isIn([
+    'Household Services', 'Personal Assistant', 'Pet Care', 'Technology and Digital Assistance',
+    'Event Support', 'Moving and Organization', 'Creative and Costume Tasks', 'General Errands', 'Other'
+  ]),
+  body('subcategory').optional().trim().escape(),
+  body('cost').optional().isNumeric().toFloat({ min: 0.01 }).withMessage('Cost must be a positive number'),
+  body('location.address').optional().trim().escape(),
+  body('location.city').optional().trim().escape(),
+  body('location.state').optional().trim().escape(),
+  body('location.postalCode').optional().trim().escape(),
+  body('location.country').optional().trim().escape(),
+  body('isRemote').optional().isBoolean().toBoolean(),
+  body('deadline').optional().isISO8601().toDate(),
+  body('duration').optional().isNumeric().toFloat({ min: 0.1 }),
+  body('skills').optional().isArray(),
+  body('skills.*').optional().isString().trim().escape(),
+];
 
 
 /**
- * --- Gig Routes ---
- * These routes allow users to view, create, update, or delete gigs.
- * Permissions for creating, updating, and deleting gigs are handled by the controller.
+ * ===============================
+ *          AUTH MIDDLEWARE
+ * ===============================
+ * All routes below require the user to be authenticated (logged in).
+ */
+router.use(protect);
+
+
+/**
+ * ===============================
+ *            GIG ROUTES
+ * ===============================
+ * Allow users to view and manage gigs.
  */
 
-// Route to get all gigs (accessible by any logged-in user)
+// Get all gigs (any logged-in user) OR create a gig (only provider)
 router.route('/')
-  .get(getAllGigs)        // Get the list of all gigs
-  .post(restrictTo('provider'), createGig);  // Only 'provider' role can create a new gig
+  .get([
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    query('sort').optional().isString().trim().escape(),
+    query('status').optional().isIn(['open', 'assigned', 'active', 'submitted', 'approved', 'completed', 'cancelled', 'pending_payment']),
+    query('category').optional().isIn([
+      'Household Services', 'Personal Assistant', 'Pet Care', 'Technology and Digital Assistance',
+      'Event Support', 'Moving and Organization', 'Creative and Costume Tasks', 'General Errands', 'Other'
+    ]),
+    validateRequest
+  ], getAllGigs)
+  .post(
+    restrictTo('provider'),
+    gigBodyValidation,
+    validateRequest,
+    createGig
+  );
+
 
 /**
- * --- Individual Gig Routes ---
- * These routes allow users to view, update, or delete a specific gig by its ID.
- * Permissions for updating or deleting gigs should be checked in the controller (e.g., by verifying if the user is the owner or an admin).
+ * ===============================
+ *        INDIVIDUAL GIG ROUTES
+ * ===============================
+ * Allow users to interact with specific gigs.
+ * Permissions to update/delete are checked within controller (e.g., owner/admin).
  */
-
-// Route to get a specific gig by its ID (accessible by any logged-in user)
 router.route('/:id')
-  .get(getGig)             // Get the gig by ID
-  .patch(updateGig)        // Update the gig (permissions checked in the controller, e.g., owner or admin)
-  .delete(deleteGig);      // Delete the gig (permissions checked in the controller, e.g., owner or admin)
+  .get(
+    param('id').isMongoId().withMessage('Invalid Gig ID format'),
+    validateRequest,
+    getGig
+  )
+  .patch(
+    param('id').isMongoId().withMessage('Invalid Gig ID format'),
+    optionalGigBodyValidation,
+    validateRequest,
+    updateGig
+  )
+  .delete(
+    param('id').isMongoId().withMessage('Invalid Gig ID format'),
+    validateRequest,
+    deleteGig
+  );
 
 
 /**
- * --- Tasker Accepts Gig ---
- * This route allows a tasker to accept a gig.
- * Only users with the 'tasker' role are permitted to accept gigs.
+ * ===============================
+ *      ACCEPT GIG (TASKER ONLY)
+ * ===============================
+ * A tasker can accept a gig by its ID.
  */
+router.patch(
+  '/:id/accept',
+  restrictTo('tasker'),
+  param('id').isMongoId().withMessage('Invalid Gig ID format'),
+  validateRequest,
+  acceptGig
+);
 
-// Route to accept a gig (only accessible by taskers)
-router.patch('/:id/accept', restrictTo('tasker'), acceptGig); // Only tasker role can accept the gig
+
+/**
+ * ===============================
+ *     MATCH GIGS FOR TASKER
+ * ===============================
+ * This route provides gig recommendations tailored to a tasker
+ * based on their profile data such as hobbies, interests, and personality.
+ */
+router.get(
+  '/match',
+  restrictTo('tasker'),
+  [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    validateRequest
+  ],
+  matchGigsForTasker
+);
+
 
 export default router;

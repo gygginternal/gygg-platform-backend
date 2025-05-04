@@ -8,7 +8,6 @@ const paymentSchema = new mongoose.Schema({
     ref: 'Contract',
     required: [true, 'A payment must be linked to a contract.'],
     unique: true,
-    index: true // Index for better query performance
   },
 
   // Gig related to the payment

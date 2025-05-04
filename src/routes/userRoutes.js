@@ -1,4 +1,6 @@
 import express from 'express';
+import { body, param, query } from 'express-validator';
+import validateRequest from '../middleware/validateRequest.js';
 import {
   signup,
   login,
@@ -15,85 +17,187 @@ import {
   getUser,
   updateUser,
   deleteUser,
+  matchTaskers,
 } from '../controllers/userController.js';
 import {
   createStripeAccount,
   createStripeAccountLink,
   getStripeAccountStatus,
-} from '../controllers/paymentController.js'; // Stripe payment-related functions
+} from '../controllers/paymentController.js';
 
 const router = express.Router();
 
 /**
- * --- Authentication Routes ---
- * These routes are used for user sign-up, login, and logout functionality.
+ * ===============================
+ *        AUTHENTICATION ROUTES
+ * ===============================
  */
 
-// User sign-up route
-router.post('/signup', signup);
+// Sign up new users
+router.post(
+  '/signup',
+  [
+    body('firstName').notEmpty().withMessage('First name is required').trim().escape(),
+    body('lastName').notEmpty().withMessage('Last name is required').trim().escape(),
+    body('email').isEmail().withMessage('Please provide a valid email').normalizeEmail(),
+    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+    body('role').optional().isArray().withMessage('Role must be an array'),
+    body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
+    body('phoneNo')
+      .optional({ checkFalsy: true })
+      .isMobilePhone('any')
+      .withMessage('Invalid phone number format'),
+  ],
+  validateRequest,
+  signup
+);
 
-// User login route
-router.post('/login', login);
+// Log in existing users
+router.post(
+  '/login',
+  [
+    body('email').isEmail().withMessage('Please provide a valid email').normalizeEmail(),
+    body('password').notEmpty().withMessage('Password cannot be empty'),
+  ],
+  validateRequest,
+  login
+);
 
-// User logout route
+// Log out current user
 router.get('/logout', logout);
 
-
 /**
- * --- Password Management Routes ---
- * These routes allow users to update their passwords. More routes (e.g., forgot/reset) can be added later.
- */
-router.use(protect); // Protect all routes below this middleware (user must be logged in)
-
-// Update password route
-router.patch('/updateMyPassword', updatePassword);
-
-
-/**
- * --- User Profile Routes ---
- * These routes allow users to get and update their own profile information.
+ * ===============================
+ *      PASSWORD MANAGEMENT
+ * ===============================
  */
 
-// Get currently logged-in user's profile data
+// Protect all routes below - only accessible to logged-in users
+router.use(protect);
+
+// Allow users to update their password
+router.patch(
+  '/updateMyPassword',
+  [
+    body('passwordCurrent').notEmpty().withMessage('Current password is required'),
+    body('password').isLength({ min: 8 }).withMessage('New password must be at least 8 characters'),
+  ],
+  validateRequest,
+  updatePassword
+);
+
+/**
+ * ===============================
+ *         USER PROFILE ROUTES
+ * ===============================
+ */
+
+// Get logged-in user's profile
 router.get('/me', getMe, getUser);
 
-// Update currently logged-in user's profile data
-router.patch('/updateMe', updateMe);
+// Update profile info for current user
+router.patch(
+  '/updateMe',
+  [
+    body('firstName').optional().trim().escape(),
+    body('lastName').optional().trim().escape(),
+    body('email').optional().isEmail().normalizeEmail(),
+    body('phoneNo')
+      .optional({ checkFalsy: true })
+      .isMobilePhone('any')
+      .withMessage('Invalid phone number format'),
+    body('bio').optional().trim().escape().isLength({ max: 500 }),
+    body('hobbies').optional().isArray(),
+    body('hobbies.*').optional().isString().trim().escape(),
+    body('peoplePreference').optional().trim().escape().isLength({ max: 300 }),
+    body('availability').optional().isObject(),
+    body('ratePerHour').optional().isNumeric().toFloat({ min: 0.0 }),
+    body('address.street').optional().trim().escape(),
+    body('address.city').optional().trim().escape(),
+    body('address.state').optional().trim().escape(),
+    body('address.postalCode').optional().trim().escape(),
+    body('address.country').optional().trim().escape(),
+    body('password').not().exists().withMessage('Password updates not allowed here.'),
+  ],
+  validateRequest,
+  updateMe
+);
 
-// Delete currently logged-in user's account
+// Delete current user's account
 router.delete('/deleteMe', deleteMe);
 
-
 /**
- * --- Stripe Onboarding Routes ---
- * These routes handle Stripe Connect account creation, account status checking, and account link creation.
- * Only users with the 'tasker' role are allowed to access these routes.
+ * ===============================
+ *      STRIPE ONBOARDING ROUTES
+ * ===============================
+ * Restricted to users with the 'tasker' role
  */
 
-// Route to create a Stripe Connect account for a tasker
+// Create a Stripe account (Tasker onboarding)
 router.post('/stripe/create-account', restrictTo('tasker'), createStripeAccount);
 
-// Route to generate a Stripe account link for a tasker to complete the onboarding process
+// Create Stripe onboarding link for user to finish setup
 router.get('/stripe/create-account-link', restrictTo('tasker'), createStripeAccountLink);
 
-// Route to get the status of a tasker's Stripe account
+// Get current Stripe account status
 router.get('/stripe/account-status', restrictTo('tasker'), getStripeAccountStatus);
 
+/**
+ * ===============================
+ *        TASKER MATCHING ROUTE
+ * ===============================
+ * Restricted to users with the 'provider' role
+ */
+
+// Match taskers to a provider's request (e.g., based on location, skills, etc.)
+router.get(
+  '/match-taskers',
+  [
+    restrictTo('provider'),
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+  ],
+  validateRequest,
+  matchTaskers
+);
 
 /**
- * --- Admin Routes ---
- * These routes allow an admin to manage all users in the system. These routes are protected by the 'admin' role.
+ * ===============================
+ *            ADMIN ROUTES
+ * ===============================
+ * Only accessible to admin users
  */
-router.use(restrictTo('admin')); // Protect all routes below this middleware (user must have 'admin' role)
 
-// Route to get all users
-router.route('/').get(getAllUsers);
+// Restrict all routes below to admin users only
+router.use(restrictTo('admin'));
 
-// Routes to get, update, and delete individual users by ID
+// Get a list of all users
+router.get('/', getAllUsers);
+
+// Admin CRUD operations for individual users
 router
   .route('/:id')
-  .get(getUser)        // Get a specific user by ID
-  .patch(updateUser)   // Admin can update a user's information (carefully defined fields)
-  .delete(deleteUser); // Admin can delete a user's account
+  .get(
+    param('id').isMongoId().withMessage('Invalid user ID format'),
+    validateRequest,
+    getUser
+  )
+  .patch(
+    param('id').isMongoId().withMessage('Invalid user ID format'),
+    [
+      body('email').optional().isEmail().normalizeEmail(),
+      body('role').optional().isArray(),
+      body('role.*').isIn(['tasker', 'provider', 'admin']),
+      body('active').optional().isBoolean().toBoolean(),
+      body('password').not().exists().withMessage('Password updates not allowed via this route.'),
+    ],
+    validateRequest,
+    updateUser
+  )
+  .delete(
+    param('id').isMongoId().withMessage('Invalid user ID format'),
+    validateRequest,
+    deleteUser
+  );
 
 export default router;

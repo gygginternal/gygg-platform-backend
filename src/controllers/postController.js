@@ -12,42 +12,77 @@ const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
   return true;  // Return true if the user is authorized
 };
 
-// Route handler to get the feed of posts, with optional sorting, pagination, and geolocation-based filtering
+// Route handler to get the feed of posts with sorting, pagination, and optional geolocation filtering
 export const getPostFeed = catchAsync(async (req, res, next) => {
-  const { sort, lat, lng, distance, page, limit } = req.query;
-  let query = Post.find();
+  // Destructure query parameters with default values
+  const { sort = 'recents', lat, lng, distance, page = 1, limit = 10 } = req.query;
 
-  // Handle sorting based on query parameter
-  if (sort === 'trending') {
-    // Sort by likeCount and createdAt for trending posts
-    query = query.sort('-likeCount -createdAt');
-  } else if (sort === 'near_me') {
-    // If 'near me' sorting is selected, handle geospatial filtering
-    if (!lat || !lng) {
-      return next(new AppError('Please provide latitude (lat) and longitude (lng) for "near me" sorting.', 400));
-    }
-    const maxDistance = (distance * 1 || 10) * 1000;  // Default max distance is 10km in meters
-    query = query.where('location').near({
-      center: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
-      maxDistance: maxDistance,
-      spherical: true
-    });
-    query = query.sort('-createdAt');  // Sort nearby results by recency
-  } else {
-    query = query.sort('-createdAt');  // Default sorting by most recent
+  // Convert page and limit to integers
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+  const skip = (pageNum - 1) * limitNum;
+
+  // Initialize query and sorting options
+  let query = Post.find();
+  let sortOptions = {};
+
+  console.log(`Fetching post feed | sort: ${sort} | page: ${pageNum} | limit: ${limitNum}`);
+
+  // --- Handle Sorting Options ---
+  switch (sort) {
+    case 'trending':
+      // Trending = Most liked and recent
+      sortOptions = { likeCount: -1, createdAt: -1 };
+      break;
+
+    case 'near_me':
+      // Validate latitude and longitude
+      if (!lat || !lng) {
+        return next(new AppError('Latitude (lat) and Longitude (lng) are required for "near me" sorting.', 400));
+      }
+
+      const latitude = parseFloat(lat);
+      const longitude = parseFloat(lng);
+
+      if (isNaN(latitude) || isNaN(longitude)) {
+        return next(new AppError('Invalid latitude or longitude values.', 400));
+      }
+
+      // Default max distance: 10km (converted to meters)
+      const maxDistanceMeters = (parseFloat(distance) || 10) * 1000;
+
+      // Apply geospatial query
+      query = query.where('location').near({
+        center: {
+          type: 'Point',
+          coordinates: [longitude, latitude], // MongoDB requires [lng, lat]
+        },
+        maxDistance: maxDistanceMeters,
+        spherical: true,
+      });
+
+      sortOptions = { createdAt: -1 }; // Near posts sorted by recency
+      break;
+
+    case 'recents':
+    default:
+      sortOptions = { createdAt: -1 }; // Default to most recent posts
+      break;
   }
 
-  // Handle pagination
-  const pageNum = page * 1 || 1;
-  const limitNum = limit * 1 || 20;  // Default limit is 20 posts per page
-  const skip = (pageNum - 1) * limitNum;
-  query = query.skip(skip).limit(limitNum).select('-__v');  // Exclude __v field from the response
+  // Apply sorting, pagination, and projection (excluding __v)
+  const posts = await query
+    .sort(sortOptions)
+    .skip(skip)
+    .limit(limitNum)
+    .select('-__v');
 
-  // Execute the query and fetch posts
-  const posts = await query;
-
-  // Return the response with posts data
-  res.status(200).json({ status: 'success', results: posts.length, data: { posts } });
+  // Send response
+  res.status(200).json({
+    status: 'success',
+    results: posts.length,
+    data: { posts },
+  });
 });
 
 // Route handler to get a single post by ID

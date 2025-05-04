@@ -67,6 +67,55 @@ export const deleteMe = catchAsync(async (req, res, next) => {
   });
 });
 
+
+// Match taskers with providers based on hobbies and personality
+export const matchTaskers = catchAsync(async (req, res, next) => {
+  const provider = req.user;
+  const providerHobbies = provider.hobbies || [];
+  const providerPreference = provider.peoplePreference || '';
+  const providerId = provider._id;
+
+  // Fallback if provider has no preferences
+  if (providerHobbies.length === 0 && !providerPreference.trim()) {
+       console.log(`Provider ${providerId} has no preferences set. Returning top-rated taskers.`);
+       const topTaskers = await User.find({ role: 'tasker', active: true, _id: { $ne: providerId } })
+                                   .sort({ rating: -1, ratingCount: -1 }).limit(10)
+                                   .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies');
+       return res.status(200).json({ status: 'success', message: 'Showing top-rated taskers.', results: topTaskers.length, data: { taskers: topTaskers }});
+  }
+
+  const pipeline = [];
+  pipeline.push({ $match: { role: 'tasker', active: true, _id: { $ne: providerId } } }); // Initial match
+
+  // Text search and score
+  if (providerPreference.trim()) {
+      pipeline.push({ $match: { $text: { $search: providerPreference } } });
+      pipeline.push({ $addFields: { score: { $meta: 'textScore' } } });
+  } else {
+       pipeline.push({ $addFields: { score: 0 } });
+  }
+
+  // Filter by matching text OR hobbies
+  const matchOrConditions = [];
+  if (providerPreference.trim()) matchOrConditions.push({ score: { $gt: 0 } });
+  if (providerHobbies.length > 0) matchOrConditions.push({ hobbies: { $in: providerHobbies } });
+  if (matchOrConditions.length > 0) { pipeline.push({ $match: { $or: matchOrConditions } }); }
+
+  // Sorting
+  pipeline.push({ $sort: { score: -1, rating: -1, ratingCount: -1 } });
+
+  // Pagination
+  const page = req.query.page * 1 || 1; const limit = req.query.limit * 1 || 10; const skip = (page - 1) * limit;
+  pipeline.push({ $skip: skip }); pipeline.push({ $limit: limit });
+
+  // Projection
+  pipeline.push({ $project: { _id: 1, firstName: 1, lastName: 1, fullName: 1, profileImage: 1, rating: 1, ratingCount: 1, bio: 1, peoplePreference: 1, hobbies: 1, role: 1, score: 1 } });
+
+  console.log('Executing Provider->Tasker Match Pipeline:', JSON.stringify(pipeline));
+  const matchedTaskers = await User.aggregate(pipeline);
+  res.status(200).json({ status: 'success', results: matchedTaskers.length, data: { taskers: matchedTaskers } });
+});
+
 // =================== ADMIN ROUTES ===================
 
 // --- Controller: Get all users (Admin only) ---

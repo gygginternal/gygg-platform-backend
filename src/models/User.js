@@ -210,6 +210,15 @@ userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
   return false;
 };
 
+// ---------------- Text Index for Search ---------------- //
+userSchema.index(
+  { peoplePreference: 'text', bio: 'text' },
+  {
+    weights: { peoplePreference: 10, bio: 5 },
+    name: 'TextSearchIndex'
+  }
+);
+
 // ---------------- Export ---------------- //
 const User = mongoose.model('User', userSchema);
 export default User;

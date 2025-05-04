@@ -1,77 +1,74 @@
 // src/routes/contractRoutes.js
 
 import express from 'express';
-import Contract from '../models/Contract.js'; // Mongoose model for Contract
-import { protect } from '../controllers/authController.js'; // Middleware to protect routes (ensures user is logged in)
-import catchAsync from '../utils/catchAsync.js'; // Utility to catch async errors and pass them to global error handler
-import AppError from '../utils/AppError.js'; // Custom error class for consistent error formatting
+import { param, query, body } from 'express-validator';
+import validateRequest from '../middleware/validateRequest.js';
+import { protect, restrictTo } from '../controllers/authController.js';
+import {
+    getContract,
+    submitWork,                   // Import the specific function
+    approveCompletionAndRelease,  // Import the specific function
+    requestRevision,              // Import the specific function
+    cancelContract                // Import the specific function
+} from '../controllers/contractController.js'; // Create this controller
 
 const router = express.Router();
+router.use(protect); // Apply 'protect' middleware to all routes in this router
 
-// --- Middleware ---
-// Apply 'protect' middleware to all routes in this router
-router.use(protect);
+// --- Route: Get contract(s) ---
+// @route   GET /api/v1/contracts?gigId=...
+// @desc    Get a contract for a specific gig (only accessible to provider or tasker involved)
+// @access  Private (protected route)
+router.get('/', [
+    query('gigId').isMongoId().withMessage('Valid Gig ID query parameter required'),
+    // Add other query validations if needed
+], validateRequest, getContract); // Using getContract which expects gigId query param
 
-/**
- * @route   GET /api/v1/contracts?gigId=...
- * @desc    Get a contract for a specific gig (only accessible to provider or tasker involved)
- * @access  Private (protected route)
- */
-router.get('/', catchAsync(async (req, res, next) => {
-    console.log('GET /contracts route hit. Query:', req.query);
+// --- Route: Get specific contract by ID ---
+// @route   GET /api/v1/contracts/:id
+// @desc    Get a specific contract by its ID
+// @access  Private (protected route)
+router.get('/:id', [
+    param('id').isMongoId().withMessage('Invalid Contract ID format'),
+], validateRequest, getContract); // Assume getContract can handle ID param too (adjust controller)
 
-    // --- Validate and Build Filter ---
-    const { gigId } = req.query;
+// --- Route: Tasker submits work ---
+// @route   PATCH /api/v1/contracts/:id/submit-work
+// @desc    Tasker submits work for a contract
+// @access  Private (only accessible to tasker)
+router.patch('/:id/submit-work', [
+    restrictTo('tasker'), // Only tasker can submit work
+    param('id').isMongoId().withMessage('Invalid Contract ID format'),
+    // Add body validation if proof/notes are submitted
+], validateRequest, submitWork); // Using a generic status updater
 
-    if (!gigId) {
-        return next(new AppError('Gig ID query parameter is required.', 400));
-    }
+// --- Route: Provider approves completion ---
+// @route   PATCH /api/v1/contracts/:id/approve-completion
+// @desc    Provider approves completion of work and triggers payout (if applicable)
+// @access  Private (only accessible to provider)
+router.patch('/:id/approve-completion', [
+    restrictTo('provider'), // Only provider can approve completion
+    param('id').isMongoId().withMessage('Invalid Contract ID format'),
+], validateRequest, approveCompletionAndRelease);
 
-    const filter = { gig: gigId };
+router.patch('/:id/request-revision', [
+    restrictTo('provider'), // Only provider requests revision
+    param('id').isMongoId().withMessage('Invalid Contract ID format'),
+    body('reason').notEmpty().withMessage('Reason for revision is required').trim().escape(),
+], validateRequest, requestRevision); // <<< Use the correct controller
 
-    // --- Query Database ---
-    const contract = await Contract.findOne(filter)
-        // .populate('provider', 'firstName lastName') // Uncomment if needed
-        // .populate('tasker', 'firstName lastName');   // Uncomment if needed
 
-    // --- Handle No Contract Found ---
-    if (!contract) {
-        console.log(`No contract found for gigId: ${gigId}`);
-        return res.status(200).json({
-            status: 'success',
-            data: { contract: null } // Important for frontend: always return a consistent structure
-        });
-    }
-
-    console.log(`Found contract ${contract._id} for gigId: ${gigId}`);
-    console.log(`Checking Auth: User=${req.user.id}, Provider=${contract.provider._id}, Tasker=${contract.tasker._id}`);
-
-    // --- Authorization Check ---
-    // Ensure the logged-in user is either the provider or the tasker for the contract
-    const isAuthorized = contract.provider._id.equals(req.user.id) || contract.tasker._id.equals(req.user.id);
-
-    if (!isAuthorized) {
-        console.warn(`Unauthorized access attempt by user ${req.user.id} on contract ${contract._id}`);
-        return next(new AppError('Not authorized to view this contract', 403));
-    }
-
-    console.log(`Auth passed for user ${req.user.id} on contract ${contract._id}`);
-
-    // --- Return Contract ---
-    res.status(200).json({
-        status: 'success',
-        data: { contract }
-    });
-}));
+// --- Route: Cancel Contract ---
+// PATCH /api/v1/contracts/:id/cancel
+router.patch('/:id/cancel', [
+    param('id').isMongoId().withMessage('Invalid Contract ID format'),
+    body('reason').optional({ checkFalsy: true }).trim().escape(), // Optional reason
+], validateRequest, cancelContract); // <<< Use the correct controlle
 
 // --- Future Route Placeholders (if needed) ---
-// GET /api/v1/contracts/:id
-// router.get('/:id', protect, getContractController);
+// PATCH /api/v1/contracts/:id/cancel
+// router.patch('/:id/cancel', protect, restrictTo('provider', 'tasker'), cancelContractController);
 
-// PATCH /api/v1/contracts/:id/submit-work
-// router.patch('/:id/submit-work', protect, restrictTo('tasker'), submitWorkController);
-
-// PATCH /api/v1/contracts/:id/approve-completion
-// router.patch('/:id/approve-completion', protect, restrictTo('provider'), approveCompletionController);
+// Add other status updates (cancel, dispute) as needed
 
 export default router;
