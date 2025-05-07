@@ -245,3 +245,22 @@ export const resendVerificationEmail = catchAsync(async (req, res, next) => {
     message: 'Verification email resent. Please check your inbox.'
   });
 });
+
+
+export const updatePassword = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id).select('+password');
+  const { passwordCurrent, password, passwordConfirm } = req.body;
+
+  if (!passwordCurrent || !(await user.correctPassword(passwordCurrent, user.password))) {
+      return next(new AppError('Your current password is incorrect', 401));
+  }
+
+  // Mongoose validation for passwordConfirm runs automatically if passwordConfirm is in schema
+  // and the schema validator is correctly defined.
+  user.password = password;
+  user.passwordConfirm = passwordConfirm; // Schema validator will check if it matches user.password
+  await user.save(); // Use save() to trigger pre-save middleware (hashing, passwordChangedAt)
+
+  // Log user in, send JWT
+  createSendToken(user, 200, res);
+});
