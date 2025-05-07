@@ -4,20 +4,26 @@ import { promisify } from 'util';
 import User from '../models/User.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
-// import sendEmail from '../utils/email.js';
+import sendEmail from '../utils/email.js';
+import logger from '../utils/logger.js';
 
-// --------------------
-// Utility: Sign JWT
-// --------------------
+/**
+ * Signs a JWT token for the given user ID.
+ * @param {string} userId - The unique identifier of the user.
+ * @returns {string} - The signed JWT token.
+ */
 const signToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN,
   });
 };
 
-// --------------------
-// Utility: Send JWT in Cookie
-// --------------------
+/**
+ * Creates and sends a JWT token in a cookie response.
+ * @param {Object} user - The user object.
+ * @param {number} statusCode - The HTTP status code for the response.
+ * @param {Object} res - The Express response object.
+ */
 const createSendToken = (user, statusCode, res) => {
   const token = signToken(user._id);
 
@@ -26,13 +32,12 @@ const createSendToken = (user, statusCode, res) => {
       Date.now() +
       process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
     ),
-    httpOnly: true, // Prevents access from client-side JS
-    secure: process.env.NODE_ENV === 'production', // Send only over HTTPS
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
   };
 
   res.cookie('jwt', token, cookieOptions);
 
-  // Remove password before sending user info
   user.password = undefined;
 
   res.status(statusCode).json({
@@ -42,13 +47,39 @@ const createSendToken = (user, statusCode, res) => {
   });
 };
 
-// --------------------
-// SIGNUP
-// --------------------
+/**
+ * Sends email verification to the user.
+ */
+const sendVerificationEmail = async (user, req) => {
+  const verificationToken = user.createEmailVerificationToken();
+  await user.save({ validateBeforeSave: false });
+
+  const verificationURL = `${req.protocol}://${req.get('host')}/api/v1/users/verifyEmail/${verificationToken}`;
+  const message = `Welcome to Gig Platform! Please verify your email:\n\n${verificationURL}\n\nThis link will expire in 10 minutes.`;
+
+  try {
+    await sendEmail({
+      email: user.email,
+      subject: 'Gig Platform - Verify Your Email Address',
+      message,
+    });
+    logger.info(`Verification email sent to ${user.email}`);
+  } catch (error) {
+    logger.error(`Failed to send verification email to ${user.email}`, { error });
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+  }
+};
+
+/**
+ * Handles user signup functionality.
+ * @route POST /api/v1/auth/signup
+ * @access Public
+ */
 export const signup = catchAsync(async (req, res, next) => {
   const { firstName, lastName, email, password, passwordConfirm, role, phoneNo } = req.body;
 
-  // Accept only allowed roles
   const allowedRoles = ['tasker', 'provider'];
   const finalRoles = Array.isArray(role)
     ? role.filter((r) => allowedRoles.includes(r))
@@ -68,12 +99,20 @@ export const signup = catchAsync(async (req, res, next) => {
     phoneNo,
   });
 
+  try {
+    await sendVerificationEmail(newUser, req);
+  } catch (emailError) {
+    logger.warn(`Signup completed for ${newUser.email}, but verification email failed.`);
+  }
+
   createSendToken(newUser, 201, res);
 });
 
-// --------------------
-// LOGIN
-// --------------------
+/**
+ * Handles user login functionality.
+ * @route POST /api/v1/auth/login
+ * @access Public
+ */
 export const login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -90,9 +129,11 @@ export const login = catchAsync(async (req, res, next) => {
   createSendToken(user, 200, res);
 });
 
-// --------------------
-// LOGOUT
-// --------------------
+/**
+ * Logs the user out by clearing the JWT cookie.
+ * @route GET /api/v1/auth/logout
+ * @access Public
+ */
 export const logout = (req, res) => {
   res.cookie('jwt', 'loggedout', {
     expires: new Date(Date.now() + 5 * 1000),
@@ -101,13 +142,14 @@ export const logout = (req, res) => {
   res.status(200).json({ status: 'success' });
 };
 
-// --------------------
-// PROTECT: Route Guard
-// --------------------
+/**
+ * Protects routes and ensures the user is authenticated.
+ * @route Middleware
+ * @access Private
+ */
 export const protect = catchAsync(async (req, res, next) => {
   let token;
 
-  // Get token from header or cookie
   if (req.headers.authorization?.startsWith('Bearer')) {
     token = req.headers.authorization.split(' ')[1];
   } else if (req.cookies.jwt) {
@@ -118,16 +160,13 @@ export const protect = catchAsync(async (req, res, next) => {
     return next(new AppError('You are not logged in!', 401));
   }
 
-  // Verify token
   const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET);
 
-  // Check if user still exists
   const currentUser = await User.findById(decoded.id).select('+passwordChangedAt');
   if (!currentUser) {
     return next(new AppError('User no longer exists.', 401));
   }
 
-  // Check if user changed password after token was issued
   if (currentUser.changedPasswordAfter(decoded.iat)) {
     return next(new AppError('Password changed recently. Please log in again.', 401));
   }
@@ -137,9 +176,9 @@ export const protect = catchAsync(async (req, res, next) => {
   next();
 });
 
-// --------------------
-// RESTRICT: Role-based Access Control
-// --------------------
+/**
+ * Restricts access to specific roles.
+ */
 export const restrictTo = (...allowedRoles) => {
   return (req, res, next) => {
     const userRoles = req.user.role || [];
@@ -151,86 +190,58 @@ export const restrictTo = (...allowedRoles) => {
   };
 };
 
-// --------------------
-// UPDATE PASSWORD (User is Logged In)
-// --------------------
-export const updatePassword = catchAsync(async (req, res, next) => {
-  const { passwordCurrent, password, passwordConfirm } = req.body;
-
-  // Get user and validate current password
-  const user = await User.findById(req.user.id).select('+password');
-  if (!user || !(await user.correctPassword(passwordCurrent, user.password))) {
-    return next(new AppError('Current password is incorrect.', 401));
-  }
-
-  // Set new password
-  user.password = password;
-  user.passwordConfirm = passwordConfirm;
-  await user.save();
-
-  createSendToken(user, 200, res);
-});
-
-// --------------------
-// FORGOT PASSWORD
-// --------------------
-export const forgotPassword = catchAsync(async (req, res, next) => {
-  const user = await User.findOne({ email: req.body.email });
-  if (!user) {
-    return next(new AppError('No user found with that email address.', 404));
-  }
-
-  const resetToken = user.createPasswordResetToken();
-  await user.save({ validateBeforeSave: false });
-
-  const resetURL = `${req.protocol}://${req.get('host')}/api/v1/auth/resetPassword/${resetToken}`;
-
-  try {
-    await sendEmail({
-      email: user.email,
-      subject: 'Your password reset token (valid for 10 minutes)',
-      message: `Forgot your password? Click here to reset it: ${resetURL}`,
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Token sent to email!',
-    });
-  } catch (err) {
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
-    await user.save({ validateBeforeSave: false });
-
-    return next(new AppError('There was an error sending the email. Try again later.', 500));
-  }
-});
-
-// --------------------
-// RESET PASSWORD (With Token from Email)
-// --------------------
-export const resetPassword = catchAsync(async (req, res, next) => {
-  // Hash token to compare with stored hashed token
+/**
+ * Verifies the user's email using the token.
+ * @route GET /api/v1/users/verifyEmail/:token
+ */
+export const verifyEmail = catchAsync(async (req, res, next) => {
   const hashedToken = crypto
     .createHash('sha256')
     .update(req.params.token)
     .digest('hex');
 
-  // Find user with valid token
   const user = await User.findOne({
-    passwordResetToken: hashedToken,
-    passwordResetExpires: { $gt: Date.now() },
+    emailVerificationToken: hashedToken,
+    emailVerificationExpires: { $gt: Date.now() }
   });
 
   if (!user) {
+    logger.warn('Email verification failed: Invalid or expired token.', { tokenAttempt: req.params.token });
     return next(new AppError('Token is invalid or has expired.', 400));
   }
 
-  // Set new password
-  user.password = req.body.password;
-  user.passwordConfirm = req.body.passwordConfirm;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
+  user.isEmailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
   await user.save();
 
-  createSendToken(user, 200, res);
+  logger.info(`Email verified successfully for user ${user._id}`);
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Email verified successfully! You can now log in.'
+  });
+});
+
+/**
+ * Resends the email verification token to the user.
+ * @route POST /api/v1/users/resendVerification
+ */
+export const resendVerificationEmail = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  if (user.isEmailVerified) {
+    return next(new AppError('Your email is already verified.', 400));
+  }
+
+  await sendVerificationEmail(user, req);
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Verification email resent. Please check your inbox.'
+  });
 });

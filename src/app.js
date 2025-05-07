@@ -27,8 +27,8 @@ const app = express();
 logger.info('🚀 Starting Express app...');
 
 // --- Trust Proxy (for Heroku, Nginx, etc.) ---
-app.enable('trust proxy');
-logger.info('✅ Trust proxy enabled');
+// app.enable('trust proxy');
+// logger.info('✅ Trust proxy enabled'); // commented for now for development test localhost
 
 // --- Stripe Webhook Route (MUST be before body parsers) ---
 app.post(
@@ -84,6 +84,8 @@ app.use('/api/v1/payments', paymentRouter); // Non-webhook routes
 app.use('/api/v1/reviews', reviewRouter);
 app.use('/api/v1/contracts', contractRouter);
 logger.info('✅ All routes successfully mounted');
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // --- Unhandled Routes Handler ---
 app.all('*', (req, res, next) => {

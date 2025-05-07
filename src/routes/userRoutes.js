@@ -41,6 +41,15 @@ router.post(
     body('lastName').notEmpty().withMessage('Last name is required').trim().escape(),
     body('email').isEmail().withMessage('Please provide a valid email').normalizeEmail(),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+    body('passwordConfirm')
+            .notEmpty().withMessage('Please confirm your password')
+            .custom((value, { req }) => { // Custom validator
+                if (value !== req.body.password) {
+                    throw new Error('Password confirmation does not match password');
+                }
+                // Indicates the success of this synchronous custom validator
+                return true;
+            }),
     body('role').optional().isArray().withMessage('Role must be an array'),
     body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
     body('phoneNo')

@@ -3,6 +3,7 @@
 import mongoose from 'mongoose';
 import validator from 'validator';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 // ---------------- Address Schema ---------------- //
 const addressSchema = new mongoose.Schema(
@@ -68,12 +69,13 @@ const userSchema = new mongoose.Schema(
     },
     passwordConfirm: {
       type: String,
-      required: [true, 'Please confirm your password'],
+      // required: [true, 'Please confirm your password'],
       validate: {
         validator: function (el) {
-          return el === this.password;
+          if (!this.isModified('password') && !this.isNew) return true;
+            return el === this.password;
         },
-        message: 'Passwords are not the same'
+        message: 'Passwords do not match'
       }
     },
     passwordChangedAt: {
@@ -129,6 +131,13 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationToken: String,
+    emailVerificationExpires: Date,
 
     // Stripe Connect Integration
     stripeAccountId: {
@@ -218,6 +227,21 @@ userSchema.index(
     name: 'TextSearchIndex'
   }
 );
+
+// --- Method to generate email verification token ---
+userSchema.methods.createEmailVerificationToken = function() {
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+
+  this.emailVerificationToken = crypto
+      .createHash('sha256')
+      .update(verificationToken)
+      .digest('hex');
+
+  this.emailVerificationExpires = Date.now() + 10 * 60 * 1000; // Token expires in 10 minutes
+
+  logger.debug(`Generated email verification token (raw): ${verificationToken} for user ${this._id}`);
+  return verificationToken; // Return the unhashed token to send via email
+};
 
 // ---------------- Export ---------------- //
 const User = mongoose.model('User', userSchema);

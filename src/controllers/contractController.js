@@ -1,18 +1,24 @@
 import mongoose from 'mongoose';
 import Contract from '../models/Contract.js';
-import Payment from '../models/Payment.js'; // Needed for checking payment status on approval potentially
-import User from '../models/User.js'; // Needed for role checks potentially
+import Payment from '../models/Payment.js';
+import User from '../models/User.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
+import logger from '../utils/logger.js';
 
-// --- Helper Function to Find and Authorize Contract Access ---
-// Ensures the contract exists and the requesting user is either the provider or tasker
+/**
+ * Helper function to verify if the user is part of the contract.
+ * @param {string} contractId - The ID of the contract.
+ * @param {string} userId - The ID of the requesting user.
+ * @param {Array<string>} allowedRoles - List of roles allowed to access the contract (default: ['provider', 'tasker', 'admin']).
+ * @returns {Promise<{contract: object, isProvider: boolean, isTasker: boolean, isAdmin: boolean}>}
+ * @throws {AppError} - If contract ID is invalid, contract is not found, or the user is not authorized.
+ */
 const findAndAuthorizeContract = async (contractId, userId, allowedRoles = ['provider', 'tasker', 'admin']) => {
     if (!mongoose.Types.ObjectId.isValid(contractId)) {
         throw new AppError('Invalid Contract ID format.', 400);
     }
 
-    // Populate provider and tasker to check IDs
     const contract = await Contract.findById(contractId).populate('provider tasker');
 
     if (!contract) {
@@ -21,69 +27,88 @@ const findAndAuthorizeContract = async (contractId, userId, allowedRoles = ['pro
 
     const isProvider = contract.provider?._id.equals(userId);
     const isTasker = contract.tasker?._id.equals(userId);
-    // Assuming req.user exists from 'protect' middleware
-    const isAdmin = allowedRoles.includes('admin') // Check if admin role is allowed for this operation
-                    && mongoose.Types.ObjectId.isValid(userId) // Ensure userId is valid before querying User model
-                    && (await User.exists({ _id: userId, role: 'admin' })); // Check DB if user is admin
+    const isAdmin = allowedRoles.includes('admin') &&
+        mongoose.Types.ObjectId.isValid(userId) &&
+        (await User.exists({ _id: userId, role: 'admin' }));
 
     if (!isProvider && !isTasker && !isAdmin) {
-         throw new AppError('You are not authorized to access this contract.', 403);
+        throw new AppError('You are not authorized to access this contract.', 403);
     }
 
-    // Return contract and flags indicating user's relation for easier use in controllers
     return { contract, isProvider, isTasker, isAdmin };
 };
 
-
-// --- Get Single Contract Details ---
+/**
+ * Get a single contract by ID.
+ * @route GET /contracts/:id
+ * @access Provider | Tasker | Admin
+ */
 export const getContract = catchAsync(async (req, res, next) => {
-    const contractId = req.params.id || req.query.contractId; // Allow getting by param or query
+    const paramId = req.params.id; // For /contracts/:id
+    const queryGigId = req.query.gigId; // For /contracts?gigId=...
     const userId = req.user.id;
 
-    if (!contractId) {
-         return next(new AppError('Contract ID is required.', 400));
+    let contractInstance; // The Mongoose document
+
+    if (paramId) {
+        logger.debug(`getContract: Attempting to find by paramId: ${paramId}`);
+        if (!mongoose.Types.ObjectId.isValid(paramId)) {
+            return next(new AppError('Invalid Contract ID format in URL parameter.', 400));
+        }
+        contractInstance = await Contract.findById(paramId);
+        if (!contractInstance) {
+            return next(new AppError('Contract not found by ID.', 404));
+        }
+    } else if (queryGigId) {
+        logger.debug(`getContract: Attempting to find by queryGigId: ${queryGigId}`);
+        if (!mongoose.Types.ObjectId.isValid(queryGigId)) {
+            return next(new AppError('Invalid Gig ID format in query.', 400));
+        }
+        contractInstance = await Contract.findOne({ gig: queryGigId });
+        if (!contractInstance) {
+            logger.info(`No contract found for gigId: ${queryGigId}, returning null contract.`);
+            // This is a valid scenario, frontend expects null if no contract
+            return res.status(200).json({ status: 'success', data: { contract: null } });
+        }
+    } else {
+        return next(new AppError('Contract ID parameter or Gig ID query is required.', 400));
     }
 
-    // findAndAuthorizeContract handles validation and authorization
-    const { contract } = await findAndAuthorizeContract(contractId, userId);
-
-    // Optionally populate more details if needed for the response
-    // await contract.populate('gig'); // Example
+    // Now, authorize access to the found contractInstance
+    // findAndAuthorizeContract expects the actual contract._id as string for its internal ObjectId check
+    const { contract: authorizedContract } = await findAndAuthorizeContract(contractInstance._id.toString(), userId);
 
     res.status(200).json({
         status: 'success',
         data: {
-            contract,
+            contract: authorizedContract, // Send the authorized (and populated) contract
         },
     });
 });
 
-
-// --- Tasker Submits Work ---
+/**
+ * Tasker submits work for an active contract.
+ * @route PATCH /contracts/:id/submit
+ * @access Tasker only
+ */
 export const submitWork = catchAsync(async (req, res, next) => {
     const contractId = req.params.id;
     const userId = req.user.id;
 
-    // Find contract, ensuring user is the tasker
-    const { contract, isTasker } = await findAndAuthorizeContract(contractId, userId, ['tasker']); // Only tasker allowed
+    const { contract, isTasker } = await findAndAuthorizeContract(contractId, userId, ['tasker']);
 
     if (!isTasker) {
-         return next(new AppError('Only the assigned tasker can submit work for this contract.', 403));
+        return next(new AppError('Only the assigned tasker can submit work for this contract.', 403));
     }
 
-    // Check current contract status (must be active)
     if (contract.status !== 'active') {
         return next(new AppError(`Cannot submit work. Contract status is '${contract.status}', requires 'active'.`, 400));
     }
 
-    // Update status
     contract.status = 'submitted';
-    // Add logic here to handle submitted files/proof if req.body contains them
-    // e.g., contract.completionProof = req.body.proofLinks;
-    await contract.save(); // Pre-save hook updates timestamp
+    await contract.save();
 
     console.log(`Work submitted for Contract ${contract._id} by Tasker ${userId}`);
-    // TODO: Notify Provider work has been submitted
 
     res.status(200).json({
         status: 'success',
@@ -94,82 +119,74 @@ export const submitWork = catchAsync(async (req, res, next) => {
     });
 });
 
-
-// --- Provider Approves Completed Work ---
-// This version updates the status AND initiates the payout trigger
-// --- Provider Approves Completed Work (Corrected for Stripe Connect Model) ---
+/**
+ * Provider approves submitted work, marking contract as completed.
+ * @route PATCH /contracts/:id/approve
+ * @access Provider only
+ */
 export const approveCompletionAndRelease = catchAsync(async (req, res, next) => {
     const contractId = req.params.id;
-    const userId = req.user.id; // Provider approving
+    const userId = req.user.id;
 
-    // Find contract, ensuring user is the provider
-    const { contract, isProvider } = await findAndAuthorizeContract(contractId, userId, ['provider']); // Only provider allowed
+    const { contract, isProvider } = await findAndAuthorizeContract(contractId, userId, ['provider']);
 
     if (!isProvider) {
-         return next(new AppError('Only the provider can approve work for this contract.', 403));
+        return next(new AppError('Only the provider can approve work for this contract.', 403));
     }
 
-    // Check current contract status (must be submitted or maybe active if payment implies readiness)
-    // Let's allow approval if it's 'submitted' or 'active' (since payment succeeded already)
     if (!['submitted', 'active'].includes(contract.status)) {
         return next(new AppError(`Cannot approve work at this stage. Contract status is '${contract.status}'.`, 400));
     }
 
-    // Check associated payment status (MUST be 'succeeded' in the Connect model)
     const payment = await Payment.findOne({ contract: contractId });
+
     if (!payment || payment.status !== 'succeeded') {
-        console.warn(`Attempting to approve Contract ${contractId} but associated Payment ${payment?._id} status is ${payment?.status} (Expected 'succeeded').`);
+        console.warn(`Payment issue for Contract ${contractId}: ${payment?.status}`);
         return next(new AppError('Cannot approve work - payment not successfully completed or funds not transferred.', 400));
     }
 
-    // --- Stripe Connect Model Logic ---
-    // Funds are already in Tasker's Stripe balance. "Approving" here updates OUR contract status.
-    console.log(`Connect Model: Approving Contract ${contractId}. Funds already in Tasker Stripe balance.`);
+    contract.status = 'completed';
+    await contract.save();
 
-    contract.status = 'completed'; // Mark the contract as completed in our system
-    await contract.save(); // Pre-save hook updates timestamp
     console.log(`Contract ${contract._id} marked as completed by Provider ${userId}.`);
-    // TODO: Notify Tasker work approved (payout is handled by Stripe schedule)
 
     return res.status(200).json({
         status: 'success',
-        message: 'Work approved successfully. Funds are available in the Tasker\'s Stripe balance per their payout schedule.',
+        message: 'Work approved successfully. Funds are available in the Tasker\'s Stripe balance.',
         data: {
             contract,
         },
     });
 });
 
-// --- Provider Requests Revision (Example) ---
+/**
+ * Provider requests revision on submitted work.
+ * @route PATCH /contracts/:id/revision
+ * @access Provider only
+ */
 export const requestRevision = catchAsync(async (req, res, next) => {
     const contractId = req.params.id;
     const userId = req.user.id;
-    const { reason } = req.body; // Get reason from request body
+    const { reason } = req.body;
 
     if (!reason || reason.trim() === '') {
         return next(new AppError('A reason is required when requesting revisions.', 400));
     }
 
-    // Find contract, ensuring user is the provider
     const { contract, isProvider } = await findAndAuthorizeContract(contractId, userId, ['provider']);
 
     if (!isProvider) {
-         return next(new AppError('Only the provider can request revisions.', 403));
+        return next(new AppError('Only the provider can request revisions.', 403));
     }
 
-    // Check current status (usually after 'submitted')
     if (contract.status !== 'submitted') {
         return next(new AppError(`Cannot request revision. Contract status is '${contract.status}', requires 'submitted'.`, 400));
     }
 
-    // Update status back to 'active' (or a specific 'revision_requested' status)
-    contract.status = 'active'; // Or 'revision_requested' if you add it to enum
-    // Optionally store the reason
-    // contract.revisionRequestReason = reason.trim();
+    contract.status = 'active';
     await contract.save();
 
     console.log(`Revision requested for Contract ${contract._id} by Provider ${userId}`);
-    // TODO: Notify Tasker that revision is requested
 
     res.status(200).json({
         status: 'success',
@@ -180,48 +197,43 @@ export const requestRevision = catchAsync(async (req, res, next) => {
     });
 });
 
-
-// --- Cancel Contract (Simplified Example) ---
-// Real cancellation needs more logic (refunds, partial payments, state checks)
+/**
+ * Cancels a contract if it's in a cancellable state.
+ * @route PATCH /contracts/:id/cancel
+ * @access Provider | Tasker
+ */
 export const cancelContract = catchAsync(async (req, res, next) => {
-     const contractId = req.params.id;
-     const userId = req.user.id;
-     const { reason } = req.body; // Optional reason
+    const contractId = req.params.id;
+    const userId = req.user.id;
+    const { reason } = req.body;
 
-     const { contract, isProvider, isTasker } = await findAndAuthorizeContract(contractId, userId);
+    const { contract, isProvider, isTasker } = await findAndAuthorizeContract(contractId, userId);
 
-     // Define statuses where cancellation is allowed (e.g., not if completed or already cancelled)
-     const cancellableStatuses = ['pending_payment', 'active', 'submitted', 'approved']; // Adjust as needed
-     if (!cancellableStatuses.includes(contract.status)) {
-         return next(new AppError(`Cannot cancel contract in its current status ('${contract.status}').`, 400));
-     }
+    const cancellableStatuses = ['pending_payment', 'active', 'submitted', 'approved'];
 
-     // --- Add Refund/Reversal Logic Here if necessary ---
-     // Check payment status. If 'succeeded' (Connect) or 'escrow_funded' (Platform),
-     // you likely need to initiate a refund via paymentController.refundPaymentForContract
-     // before marking the contract as cancelled.
-     const payment = await Payment.findOne({ contract: contractId });
-     if (payment && ['succeeded', 'escrow_funded'].includes(payment.status)) {
-          console.warn(`Contract ${contractId} cancellation requested, but payment (${payment.status}) exists. REFUND PROCESS NEEDED.`);
-          // !! For now, we just cancel the contract, but REFUND MUST BE HANDLED !!
-          // return next(new AppError('Cannot cancel directly, payment exists. Please use refund process.', 400));
-     }
-     // --- End Refund Logic Placeholder ---
+    if (!cancellableStatuses.includes(contract.status)) {
+        return next(new AppError(`Cannot cancel contract in its current status ('${contract.status}').`, 400));
+    }
 
+    const payment = await Payment.findOne({ contract: contractId });
 
-     contract.status = 'cancelled';
-     if (reason) contract.cancellationReason = reason.trim();
-     contract.cancelledAt = Date.now(); // Set timestamp explicitly or use hook
-     await contract.save();
+    if (payment && ['succeeded', 'escrow_funded'].includes(payment.status)) {
+        console.warn(`Contract ${contractId} has a payment with status ${payment.status}. Consider refund.`);
+        // Optionally: return next(new AppError('Cannot cancel directly, payment exists. Use refund process.', 400));
+    }
 
-     console.log(`Contract ${contract._id} cancelled by User ${userId}`);
-     // TODO: Notify other party
+    contract.status = 'cancelled';
+    if (reason) contract.cancellationReason = reason.trim();
+    contract.cancelledAt = Date.now();
+    await contract.save();
 
-     res.status(200).json({
-         status: 'success',
-         message: 'Contract cancelled successfully.',
-         data: {
-             contract,
-         },
-     });
- });
+    console.log(`Contract ${contract._id} cancelled by User ${userId}`);
+
+    res.status(200).json({
+        status: 'success',
+        message: 'Contract cancelled successfully.',
+        data: {
+            contract,
+        },
+    });
+});
