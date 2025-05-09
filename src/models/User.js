@@ -31,6 +31,13 @@ const availabilitySchema = new mongoose.Schema(
   { _id: false }
 );
 
+const albumPhotoSchema = new mongoose.Schema({
+  url: { type: String, required: true }, // S3 Object URL (or CloudFront URL)
+  key: { type: String, required: true, select: false }, // <<< S3 Object Key (needed for deletion)
+  caption: { type: String, trim: true, maxlength: 50 },
+  uploadedAt: { type: Date, default: Date.now }
+}, { _id: true });
+
 // ---------------- User Schema ---------------- //
 const userSchema = new mongoose.Schema(
   {
@@ -91,6 +98,10 @@ const userSchema = new mongoose.Schema(
       enum: ['tasker', 'provider', 'admin'],
       required: [true, 'At least one role is required']
     },
+
+    profileImage: { type: String, default: 'default.jpg' }, // Store S3/CloudFront URL
+    profileImageKey: { type: String, select: false }, // <<< Renamed field for S3 Key
+    album: [albumPhotoSchema],
 
     // Profile Details
     address: addressSchema,
