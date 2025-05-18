@@ -30,7 +30,7 @@ const createSendToken = (user, statusCode, res) => {
   const cookieOptions = {
     expires: new Date(
       Date.now() +
-      process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
+      parseInt(process.env.JWT_COOKIE_EXPIRES_IN || '90', 10) * 24 * 60 * 60 * 1000
     ),
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -40,10 +40,23 @@ const createSendToken = (user, statusCode, res) => {
 
   user.password = undefined;
 
+  // --- Check for onboarding redirection ---
+  let redirectToOnboardingPath = null;
+  if (user.role.includes('tasker') && !user.isTaskerOnboardingComplete) {
+      redirectToOnboardingPath = '/onboarding/tasker'; // Frontend route for tasker onboarding
+  }
+  // Example: Add a similar check for providers if you have provider-specific onboarding
+  else if (user.role.includes('provider') && !user.isProviderOnboardingComplete) {
+      redirectToOnboardingPath = '/onboarding/provider';
+  }
+
   res.status(statusCode).json({
     status: 'success',
     token,
-    data: { user },
+    data: { 
+      user,
+      redirectToOnboarding: redirectToOnboardingPath, // Send this to the frontend
+     },
   });
 };
 
@@ -119,13 +132,21 @@ export const login = catchAsync(async (req, res, next) => {
     return next(new AppError('Please provide email and password!', 400));
   }
 
-  const user = await User.findOne({ email }).select('+password');
-  const isCorrect = user && await user.correctPassword(password, user.password);
+  // Select onboarding flags along with password
+  const user = await User.findOne({ email }).select('+password +isTaskerOnboardingComplete +isProviderOnboardingComplete');
 
-  if (!isCorrect) {
+  if (!user || !(await user.correctPassword(password, user.password))) {
+    logger.warn(`Login attempt failed for email: ${email} (Incorrect credentials)`);
     return next(new AppError('Incorrect email or password', 401));
   }
 
+  if (!user.isEmailVerified) {
+    logger.warn(`Login attempt by unverified user: ${user.email}`);
+    return next(new AppError('Please verify your email address before logging in. Check your inbox for the verification link.', 403));
+  }
+
+  logger.info(`User logged in successfully: ${user.email}`);
+  // createSendToken now handles sending the token, user data, AND the onboarding redirect signal
   createSendToken(user, 200, res);
 });
 

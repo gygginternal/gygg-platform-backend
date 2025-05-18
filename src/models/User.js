@@ -1,9 +1,10 @@
-// models/User.ts
+// models/User.js
 
 import mongoose from 'mongoose';
 import validator from 'validator';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import logger from '../utils/logger.js';
 
 // ---------------- Address Schema ---------------- //
 const addressSchema = new mongoose.Schema(
@@ -171,7 +172,20 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
       select: false
-    }
+    },
+
+    // Onboarding Completion Flags
+    isTaskerOnboardingComplete: { 
+        type: Boolean,
+        default: false,
+        select: true // Select this by default so login can check it
+    },
+    // Example for provider:
+    isProviderOnboardingComplete: {
+        type: Boolean,
+        default: false,
+        select: true
+    },
 
   },
   {
