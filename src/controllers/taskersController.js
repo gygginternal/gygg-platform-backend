@@ -55,35 +55,20 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
   });
 
   // Sort by matchScore in descending order
-  pipeline.push({ $sort: { matchScore: -1 } });
+  pipeline.push({ $sort: { matchScore: -1, rating: -1, ratingCount: -1 } });
+
+  // Pagination
+  const page = req.query.page * 1 || 1;
+  const limit = req.query.limit * 1 || 10;
+  const skip = (page - 1) * limit;
+  pipeline.push({ $skip: skip });
+  pipeline.push({ $limit: limit });
 
   // Project fields to match the mocked response
-
-  // {
-  //             "_id": "682d3c2a19a3cd652df42252",
-  //             "name": "User1 Test",
-  //             "rate": "$10/hr",
-  //             "location": ", ",
-  //             "description": "Lorem ipsum",
-  //             "services": [
-  //                 "Reading",
-  //                 "Cooking",
-  //                 "Running",
-  //                 "Music",
-  //                 "Traveling"
-  //             ],
-  //             "image": "https://example.com/profile.jpg"
-  //         },
-
   pipeline.push({
     $project: {
-      name: {
-        $concat: [
-          { $ifNull: ["$firstName", ""] },
-          " ",
-          { $ifNull: ["$lastName", ""] },
-        ],
-      },
+      id: "$_id", // Use MongoDB's _id as the id
+      name: { $concat: ["$firstName", ".", { $substr: ["$lastName", 0, 1] }] }, // Format name as "FirstName.T"
       rate: {
         $concat: [
           { $literal: "$" },
@@ -92,29 +77,22 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
         ],
       },
       location: {
-        $concat: [
-          { $ifNull: ["$address.city", ""] },
-          ", ",
-          { $ifNull: ["$address.state", ""] },
-        ],
+        $concat: ["$address.city", ", ", "$address.state"], // Combine city and state
       },
-      description: { $ifNull: ["$bio", ""] },
-      services: { $ifNull: ["$hobbies", []] },
+      description: "$bio", // Use bio for the description
+      services: "$skills", // Use skills as services
       image: {
-        $cond: {
-          if: { $ne: ["$profileImage", null] },
-          then: "$profileImage",
-          else: "/default.png",
-        },
+        $ifNull: ["$profileImage", "/default.png"], // Use profileImage or fallback to /default.png
       },
+      matchScore: 1, // Include matchScore in the response
     },
   });
 
-  const matchedUsers = await User.aggregate(pipeline);
+  const matchedTaskers = await User.aggregate(pipeline);
 
   logger.info(
-    `matchTaskers: Found ${matchedUsers.length} users for tasker ${taskerId}.`
+    `matchTaskers: Found ${matchedTaskers.length} taskers for tasker ${taskerId}.`
   );
 
-  res.status(200).json(matchedUsers);
+  res.status(200).json(matchedTaskers);
 });
