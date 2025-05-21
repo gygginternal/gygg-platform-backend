@@ -77,6 +77,13 @@ export const updateMe = catchAsync(async (req, res, next) => {
       .map((h) => h.trim())
       .filter((h) => h);
   }
+  if (req.body.skills !== undefined) {
+    const skillsString = String(req.body.skills || "");
+    filteredBody.skills = skillsString
+      .split(",")
+      .map((h) => h.trim())
+      .filter((h) => h);
+  }
   if (req.body.peoplePreference !== undefined) {
     const peoplePreferenceString = String(req.body.peoplePreference || "");
     filteredBody.peoplePreference = peoplePreferenceString
