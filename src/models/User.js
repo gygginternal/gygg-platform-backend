@@ -119,6 +119,7 @@ const userSchema = new mongoose.Schema(
       default: "default.jpg",
     },
     hobbies: [{ type: String, trim: true }],
+    skills: [{ type: String, trim: true }],
     peoplePreference: [
       {
         type: String,

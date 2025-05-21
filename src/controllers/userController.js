@@ -77,6 +77,13 @@ export const updateMe = catchAsync(async (req, res, next) => {
       .map((h) => h.trim())
       .filter((h) => h);
   }
+  if (req.body.skills !== undefined) {
+    const skillsString = String(req.body.skills || "");
+    filteredBody.skills = skillsString
+      .split(",")
+      .map((h) => h.trim())
+      .filter((h) => h);
+  }
   if (req.body.peoplePreference !== undefined) {
     const peoplePreferenceString = String(req.body.peoplePreference || "");
     filteredBody.peoplePreference = peoplePreferenceString
@@ -319,7 +326,7 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
     )}], Pref: "${providerPreference}"`
   );
 
-  if (providerHobbies.length === 0 && !providerPreference.trim()) {
+  if (providerHobbies.length === 0) {
     logger.info(
       `matchTaskers: Provider ${providerId} has no preferences. Returning top-rated.`
     );
@@ -346,15 +353,9 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
     $match: { role: "tasker", active: true, _id: { $ne: providerId } },
   });
 
-  if (providerPreference.trim()) {
-    pipeline.push({ $match: { $text: { $search: providerPreference } } });
-    pipeline.push({ $addFields: { score: { $meta: "textScore" } } });
-  } else {
-    pipeline.push({ $addFields: { score: 0 } });
-  }
-
   const matchOrConditions = [];
-  if (providerPreference.trim()) matchOrConditions.push({ score: { $gt: 0 } });
+  if (providerPreference.length > 0)
+    matchOrConditions.push({ score: { $gt: 0 } });
   if (providerHobbies.length > 0)
     matchOrConditions.push({ hobbies: { $in: providerHobbies } });
   // You could add skills matching here too if provider has a skills preference field
