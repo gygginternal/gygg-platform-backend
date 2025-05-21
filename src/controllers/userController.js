@@ -164,10 +164,18 @@ export const updateMe = catchAsync(async (req, res, next) => {
     `updateMe: Updating user ${req.user.id} with data:`,
     filteredBody
   );
-  const updatedUser = await User.findByIdAndUpdate(req.user.id, filteredBody, {
-    new: true, // Return the modified document rather than the original
-    runValidators: true, // Ensure schema validations run on update
-  });
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user.id,
+    {
+      ...filteredBody,
+      isTaskerOnboardingComplete: true,
+      isProviderOnboardingComplete: true,
+    },
+    {
+      new: true, // Return the modified document rather than the original
+      runValidators: true, // Ensure schema validations run on update
+    }
+  );
 
   if (!updatedUser) {
     // Should not happen if protect middleware ensures user exists
