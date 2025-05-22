@@ -237,21 +237,9 @@ router.get(
  *         STRIPE ONBOARDING (Tasker only)
  * ===============================
  */
-router.post(
-  "/stripe/connect-account",
-  restrictTo("tasker"),
-  createStripeAccount
-); // No body input from user
-router.get(
-  "/stripe/account-link",
-  restrictTo("tasker"),
-  createStripeAccountLink
-); // No params/body
-router.get(
-  "/stripe/account-status",
-  restrictTo("tasker"),
-  getStripeAccountStatus
-); // No params/body
+router.post("/stripe/connect-account", createStripeAccount); // No body input from user
+router.get("/stripe/account-link", createStripeAccountLink); // No params/body
+router.get("/stripe/account-status", getStripeAccountStatus); // No params/body
 
 /**
  * ===============================
