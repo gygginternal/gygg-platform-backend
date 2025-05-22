@@ -6,6 +6,7 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import sendEmail from "../utils/email.js";
 import logger from "../utils/logger.js";
+import { stripe } from "./paymentController.js";
 
 /**
  * Signs a JWT token for the given user ID.
@@ -123,6 +124,17 @@ export const signup = catchAsync(async (req, res, next) => {
     );
   }
 
+  const account = await stripe.accounts.create({
+    type: "stanardard",
+    country: "CA",
+    email: user.email,
+    capabilities: {
+      card_payments: { requested: true },
+      transfers: { requested: true },
+    },
+    business_type: "individual",
+  });
+
   const newUser = await User.create({
     firstName,
     lastName,
@@ -131,6 +143,7 @@ export const signup = catchAsync(async (req, res, next) => {
     passwordConfirm,
     role: finalRoles,
     phoneNo,
+    stripeAccountId: account.id,
   });
 
   try {
