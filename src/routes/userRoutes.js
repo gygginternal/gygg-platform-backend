@@ -135,7 +135,7 @@ const updateMeValidation = [
     .optional({ checkFalsy: true })
     .isMobilePhone("any", { strictMode: false })
     .withMessage("Invalid phone number"),
-  body("bio").optional().trim().escape().isLength({ max: 500 }),
+  body("bio").optional().trim().escape().isLength({ max: 750 }),
   body("hobbies").optional().isArray().withMessage("Hobbies must be an array"),
   body("hobbies.*").optional().isString().trim().escape(),
   body("skills").optional().isArray().withMessage("Skills must be an array"), // If 'skills' field added to User model
