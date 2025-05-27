@@ -25,6 +25,11 @@ import { stripeWebhookHandler } from "./controllers/paymentController.js";
 
 // --- App Initialization ---
 const app = express();
+app.post(
+  "/api/v1/payments/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhookHandler
+);
 logger.info("🚀 Starting Express app...");
 
 // --- Trust Proxy (for Heroku, Nginx, etc.) ---
@@ -32,11 +37,6 @@ logger.info("🚀 Starting Express app...");
 // logger.info('✅ Trust proxy enabled'); // commented for now for development test localhost
 
 // --- Stripe Webhook Route (MUST be before body parsers) ---
-app.post(
-  "/api/v1/payments/webhook",
-  express.raw({ type: "application/json" }),
-  stripeWebhookHandler
-);
 logger.info("✅ Stripe webhook route mounted");
 
 // --- Global Middleware ---
@@ -57,7 +57,7 @@ logger.info(
 
 // Rate Limiting - Avoid abuse
 const limiter = rateLimit({
-  max: 200, // Max requests per IP per window
+  max: 1000, // Max requests per IP per window
   windowMs: 60 * 60 * 1000, // 1 hour
   message: { status: "fail", message: "Too many requests, try again later." },
   standardHeaders: true,

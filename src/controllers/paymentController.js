@@ -29,7 +29,6 @@ export const checkIfContractIsReleasable = catchAsync(
     const balance = await stripe.balance.retrieve({
       stripeAccount: payment.payee.stripeAccountId,
     });
-    console.log(JSON.stringify({ balance }, null, 2));
 
     const available = balance.available.find(
       (b) => b.currency === payment.currency
@@ -133,7 +132,6 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
 
   // Create a payout using the payment details
   const acc = await stripe.accounts.retrieve(payment.payee.stripeAccountId);
-  console.log({ acc });
 
   const payout = await stripe.payouts.create(
     {
@@ -148,6 +146,7 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
   // Update the payment status to "released"
   payment.status = payout.status;
   payment.stripePayoutId = payout.id;
+  payment.status = "pending";
 
   await payment.save();
 
@@ -317,7 +316,6 @@ export const createPaymentIntentForContract = catchAsync(
     } else {
       // If there's no existing payment intent, create one
       paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-      console.log({ paymentIntent });
 
       payment.stripePaymentIntentId = paymentIntent.id;
       payment.stripePaymentIntentSecret = paymentIntent.client_secret;
@@ -361,6 +359,72 @@ const handlePayoutPaid = async (dataObject) => {
   }
 };
 
+const handleChargeRefunded = async (dataObject) => {
+  try {
+    const charge = dataObject;
+
+    // Retrieve the PaymentIntent ID from the charge
+    const paymentIntentId = charge.payment_intent;
+
+    if (!paymentIntentId) {
+      console.log("No PaymentIntent associated with this charge.");
+      return;
+    }
+
+    console.log(
+      `Refunded charge was linked to PaymentIntent: ${paymentIntentId}`
+    );
+
+    // Fetch the PaymentIntent from Stripe
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    console.log(`PaymentIntent status: ${paymentIntent.status}`);
+
+    // Find the payment record in the database
+    const payment = await Payment.findOne({
+      stripePaymentIntentId: paymentIntentId,
+    });
+
+    if (!payment) {
+      console.error(
+        `❌ Payment record not found for PaymentIntent: ${paymentIntentId}`
+      );
+      return;
+    }
+
+    // Update the payment status to "refunded"
+    payment.status = "refunded";
+    await payment.save();
+
+    console.log(
+      `✅ Payment status updated to "refunded" for PaymentIntent: ${paymentIntentId}`
+    );
+
+    // Find the associated contract and gig
+    const contract = await Contract.findById(payment.contract);
+    const gig = await Gig.findById(payment.gig);
+
+    if (contract) {
+      // Update the contract status to "cancelled"
+      contract.status = "cancelled";
+      await contract.save();
+      console.log(
+        `✅ Contract status updated to "cancelled" for Contract ID: ${contract._id}`
+      );
+    }
+
+    if (gig) {
+      // Update the gig status to "cancelled"
+      gig.status = "cancelled";
+      await gig.save();
+      console.log(
+        `✅ Gig status updated to "cancelled" for Gig ID: ${gig._id}`
+      );
+    }
+  } catch (error) {
+    console.error(`❌ Error handling charge.refunded event: ${error.message}`);
+  }
+};
+
 // --- Stripe Webhook Handler ---
 export const stripeWebhookHandler = async (req, res) => {
   const sig = req.headers["stripe-signature"];
@@ -369,7 +433,8 @@ export const stripeWebhookHandler = async (req, res) => {
 
   // Verify the webhook signature
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    console.log("receiving webhook event", JSON.stringify(event, null, 2)); // Log the event for debugging
   } catch (err) {
     console.error(`❌ Webhook signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -379,6 +444,9 @@ export const stripeWebhookHandler = async (req, res) => {
 
   // Handle different event types from Stripe
   switch (event.type) {
+    case "charge.refunded": // Handle payout.paid event
+      await handleChargeRefunded(dataObject);
+      break;
     case "payout.paid": // Handle payout.paid event
       await handlePayoutPaid(dataObject);
       break;
@@ -415,7 +483,6 @@ export const refundPaymentForContract = catchAsync(async (req, res, next) => {
       expand: ["charges"],
     }
   );
-  console.log({ paymentIntent });
 
   const chargeId = paymentIntent.latest_charge;
   try {
@@ -428,7 +495,8 @@ export const refundPaymentForContract = catchAsync(async (req, res, next) => {
     );
 
     // Update payment and contract status
-    payment.status = "refund_pending";
+
+    payment.status = refund.status === "succeeded" ? "canceled" : "canceling";
     payment.stripeRefundId = refund.id;
     await payment.save();
     contract.status = "cancelled";
