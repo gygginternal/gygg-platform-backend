@@ -252,10 +252,8 @@ export const protect = catchAsync(async (req, res, next) => {
 export const restrictTo = (...allowedRoles) => {
   return (req, res, next) => {
     const userRoles = req.user.role || [];
-    console.log({ userRoles, allowedRoles });
 
     const hasAccess = userRoles.some((role) => allowedRoles.includes(role));
-    console.log({ hasAccess });
 
     if (!hasAccess) {
       return next(
