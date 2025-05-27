@@ -2,7 +2,7 @@ import express from 'express';
 import { body, param, query } from 'express-validator';
 import validateRequest from '../middleware/validateRequest.js';
 import {
-    getPostFeed, getPost, createPost, updatePost, deletePost, likePost, unlikePost, addComment, deleteComment
+    getPostFeed, getPost,  getUserPosts, createPost, updatePost, deletePost, likePost, unlikePost, addComment, deleteComment
 } from '../controllers/postController.js';
 import { protect } from '../controllers/authController.js'; // Middleware to protect routes that require authentication
 
@@ -79,6 +79,29 @@ router.route('/:id')
     validateRequest,
     deletePost
   );
+
+/**
+ * ================================
+ *         USER POSTS ROUTE
+ * ================================
+ * This route retrieves all posts associated with a specific user.
+ * Useful for displaying a user's posts on their profile or dashboard.
+ *
+ * Route: GET /api/v1/posts/user/:userId
+ * Middleware:
+ * - protect: Ensures the user is authenticated (can be removed if user profiles are public).
+ * - param('userId'): Validates that the user ID is a valid MongoDB ObjectId.
+ * - query('page') and query('limit'): Support pagination of results.
+ *
+ * The actual fetching logic and any permission handling (e.g., if posts should only be visible to certain users)
+ * should be managed inside the getUserPosts controller.
+ */
+router.get('/user/:userId', [ // Example path: /api/v1/posts/user/:userId
+    protect, // Or make it public if user profiles are public
+    param('userId').isMongoId().withMessage('Invalid user ID format'),
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 50 }).toInt(),
+], validateRequest, getUserPosts);
 
 
 /**

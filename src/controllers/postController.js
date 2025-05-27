@@ -144,6 +144,45 @@ export const updatePost = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', data: { post: updatedPost } });
 });
 
+// Route handler to get a posts based on userId
+export const getUserPosts = catchAsync(async (req, res, next) => {
+    const userId = req.params.userId; // Get userId from route parameter
+    // Validation for userId format is handled by express-validator in routes
+
+    logger.debug(`Fetching posts for user ID (dedicated endpoint): ${userId}`);
+
+    // Check if user exists (optional, but good practice)
+    const userExists = await User.findById(userId); // Assuming User model is imported
+    if (!userExists) {
+        return next(new AppError('User not found.', 404));
+    }
+
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+
+    const posts = await Post.find({ author: userId }) // Direct filter by author
+        .sort({ createdAt: -1 }) // Default sort for user's posts
+        .skip(skip)
+        .limit(limit)
+        .select('-__v'); // Population of author/comments handled by pre-find hook
+
+    // Optional: Get total count for pagination
+    const totalPosts = await Post.countDocuments({ author: userId });
+
+    res.status(200).json({
+        status: 'success',
+        results: posts.length,
+        total: totalPosts,
+        page: page,
+        totalPages: Math.ceil(totalPosts / limit),
+        data: {
+            posts,
+        },
+    });
+});
+
 // Route handler to delete a post
 export const deletePost = catchAsync(async (req, res, next) => {
   const post = await Post.findById(req.params.id);  // Find the post by ID

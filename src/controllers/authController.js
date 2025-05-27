@@ -164,6 +164,9 @@ export const signup = catchAsync(async (req, res, next) => {
  */
 export const login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
+
+  logger.info(`Login attempt received for email: ${email}`, { requestBody: req.body });
+
   if (!email || !password) {
     return next(new AppError("Please provide email and password!", 400));
   }
@@ -179,6 +182,8 @@ export const login = catchAsync(async (req, res, next) => {
     );
     return next(new AppError("Incorrect email or password", 401));
   }
+
+  logger.info(`User found for login attempt: ${user.email}, ID: ${user._id}`);
 
   if (!user.isEmailVerified) {
     logger.warn(`Login attempt by unverified user: ${user.email}`);
