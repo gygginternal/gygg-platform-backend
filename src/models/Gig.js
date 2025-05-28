@@ -118,6 +118,25 @@ const gigSchema = new mongoose.Schema({
 });
 
 // Indexes to improve query performance
+gigSchema.index(
+    {
+        title: 'text',
+        description: 'text',
+        skills: 'text', // If you want to search within the skills array
+        category: 'text', // Optional: include category in text search
+        subcategory: 'text' // Optional: include subcategory
+    },
+    {
+        weights: { // Assign weights to prioritize matches in certain fields
+            title: 10,
+            skills: 7,
+            category: 5,
+            description: 3
+        },
+        name: 'GigTextSearchIndex' // Optional: name for the index
+    }
+);
+
 gigSchema.index({ status: 1, category: 1 });
 gigSchema.index({ postedBy: 1 });
 gigSchema.index({ assignedTo: 1 });
@@ -126,10 +145,10 @@ gigSchema.index({ assignedTo: 1 });
 gigSchema.pre(/^find/, function (next) {
   this.populate({
     path: 'postedBy',
-    select: 'firstName lastName profileImage rating'
+    select: 'firstName lastName profileImage rating fullName'
   });
 
-  if (!this.options?.skipPopulateAssignedTo) {
+  if (!this.options?.skipPopulateAssignedTo && this.getQuery().assignedTo !== undefined) {
     this.populate({
       path: 'assignedTo',
       select: 'firstName lastName profileImage rating'
