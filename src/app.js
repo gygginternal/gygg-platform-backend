@@ -19,6 +19,7 @@ import chatRouter from "./routes/chatRoutes.js";
 import paymentRouter from "./routes/paymentRoutes.js";
 import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
+import applicanceRoutes from "./routes/applicanceRoutes.js"; // Import the applicance routes
 
 // Stripe Webhook Handler
 import { stripeWebhookHandler } from "./controllers/paymentController.js";
@@ -81,6 +82,7 @@ logger.info("🧼 Input sanitization middleware applied");
 logger.info("🔗 Mounting API routes...");
 app.get("/", (req, res) => res.send("API is running..."));
 
+app.use("/api/v1/applicances", applicanceRoutes); // Mount the applicance routes
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/taskers", taskersRoutes);
 app.use("/api/v1/gigs", gigRouter);
