@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
@@ -46,12 +45,6 @@ app.use(helmet());
 logger.info("🛡️ Helmet applied for security headers");
 
 // CORS Configuration
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "*", // Use env in production
-    credentials: true,
-  })
-);
 logger.info(
   `🌐 CORS configured for origin: ${process.env.FRONTEND_URL || "*"}`
 );
