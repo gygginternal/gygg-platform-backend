@@ -32,10 +32,11 @@ const availabilitySchema = new mongoose.Schema(
   { _id: false }
 );
 
+// ---------------- Album Photo Schema ---------------- //
 const albumPhotoSchema = new mongoose.Schema(
   {
     url: { type: String, required: true }, // S3 Object URL (or CloudFront URL)
-    key: { type: String, required: true, select: false }, // <<< S3 Object Key (needed for deletion)
+    key: { type: String, required: true, select: false }, // S3 Object Key (for deletion)
     caption: { type: String, trim: true, maxlength: 50 },
     uploadedAt: { type: Date, default: Date.now },
   },
@@ -80,7 +81,6 @@ const userSchema = new mongoose.Schema(
     },
     passwordConfirm: {
       type: String,
-      // required: [true, 'Please confirm your password'],
       validate: {
         validator: function (el) {
           if (!this.isModified("password") && !this.isNew) return true;
@@ -103,9 +103,10 @@ const userSchema = new mongoose.Schema(
       required: [true, "At least one role is required"],
     },
 
-    profileImage: { type: String, default: "default.jpg" }, // Store S3/CloudFront URL
-    profileImageKey: { type: String, select: false }, // <<< Renamed field for S3 Key
-    album: [albumPhotoSchema],
+    // Profile Image & Album
+    profileImage: { type: String, default: "default.jpg" }, // S3/CloudFront URL
+    profileImageKey: { type: String, select: false }, // S3 Key for deletion
+    album: [albumPhotoSchema], // User's photo gallery
 
     // Profile Details
     address: addressSchema,
@@ -114,20 +115,13 @@ const userSchema = new mongoose.Schema(
       trim: true,
       maxlength: [750, "Bio cannot be more than 750 characters"],
     },
-    profileImage: {
-      type: String,
-      default: "default.jpg",
-    },
     hobbies: [{ type: String, trim: true }],
     skills: [{ type: String, trim: true }],
     peoplePreference: [
       {
         type: String,
         trim: true,
-        maxlength: [
-          300,
-          "People preference cannot be more than 300 characters",
-        ],
+        maxlength: [300, "People preference cannot be more than 300 characters"],
       },
     ],
 
@@ -153,6 +147,7 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // Verification
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -160,10 +155,8 @@ const userSchema = new mongoose.Schema(
     emailVerificationToken: String,
     emailVerificationExpires: Date,
 
-    // Stripe Connect Integration
-    stripeAccountId: {
-      type: String,
-    },
+    // Stripe Integration
+    stripeAccountId: String,
     stripeChargesEnabled: {
       type: Boolean,
       default: false,
@@ -182,13 +175,12 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // Onboarding Completion Flags
+    // Onboarding Flags
     isTaskerOnboardingComplete: {
       type: Boolean,
       default: false,
-      select: true, // Select this by default so login can check it
+      select: true,
     },
-    // Example for provider:
     isProviderOnboardingComplete: {
       type: Boolean,
       default: false,
@@ -209,55 +201,6 @@ userSchema.virtual("fullName").get(function () {
 
 // ---------------- Indexes ---------------- //
 userSchema.index({ stripeAccountId: 1 });
-
-// ---------------- Document Middleware ---------------- //
-
-// Encrypt password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  this.password = await bcrypt.hash(this.password, 12);
-  this.passwordConfirm = undefined; // Remove confirm field
-  next();
-});
-
-// Set passwordChangedAt if password is modified
-userSchema.pre("save", function (next) {
-  if (!this.isModified("password") || this.isNew) return next();
-  this.passwordChangedAt = Date.now() - 1000;
-  next();
-});
-
-// ---------------- Query Middleware ---------------- //
-
-// Exclude inactive users from all find queries
-userSchema.pre(/^find/, function (next) {
-  this.find({ active: { $ne: false } });
-  next();
-});
-
-// ---------------- Instance Methods ---------------- //
-
-// Check if provided password is correct
-userSchema.methods.correctPassword = async function (
-  candidatePassword,
-  userPassword
-) {
-  return await bcrypt.compare(candidatePassword, userPassword);
-};
-
-// Check if user changed password after JWT was issued
-userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
-  if (this.passwordChangedAt) {
-    const changedTimestamp = parseInt(
-      this.passwordChangedAt.getTime() / 1000,
-      10
-    );
-    return JWTTimestamp < changedTimestamp;
-  }
-  return false;
-};
-
-// ---------------- Text Index for Search ---------------- //
 userSchema.index(
   { peoplePreference: "text", bio: "text" },
   {
@@ -266,7 +209,48 @@ userSchema.index(
   }
 );
 
-// --- Method to generate email verification token ---
+// ---------------- Document Middleware ---------------- //
+
+// Encrypt password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  this.password = await bcrypt.hash(this.password, 12);
+  this.passwordConfirm = undefined;
+  next();
+});
+
+// Update passwordChangedAt timestamp
+userSchema.pre("save", function (next) {
+  if (!this.isModified("password") || this.isNew) return next();
+  this.passwordChangedAt = Date.now() - 1000;
+  next();
+});
+
+// ---------------- Query Middleware ---------------- //
+
+// Filter out inactive users
+userSchema.pre(/^find/, function (next) {
+  this.find({ active: { $ne: false } });
+  next();
+});
+
+// ---------------- Instance Methods ---------------- //
+
+// Compare passwords
+userSchema.methods.correctPassword = async function (candidatePassword, userPassword) {
+  return await bcrypt.compare(candidatePassword, userPassword);
+};
+
+// Check if password was changed after JWT issued
+userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
+  if (this.passwordChangedAt) {
+    const changedTimestamp = parseInt(this.passwordChangedAt.getTime() / 1000, 10);
+    return JWTTimestamp < changedTimestamp;
+  }
+  return false;
+};
+
+// Generate email verification token
 userSchema.methods.createEmailVerificationToken = function () {
   const verificationToken = crypto.randomBytes(32).toString("hex");
 
@@ -275,12 +259,13 @@ userSchema.methods.createEmailVerificationToken = function () {
     .update(verificationToken)
     .digest("hex");
 
-  this.emailVerificationExpires = Date.now() + 10 * 60 * 1000; // Token expires in 10 minutes
+  this.emailVerificationExpires = Date.now() + 10 * 60 * 1000;
 
   logger.debug(
     `Generated email verification token (raw): ${verificationToken} for user ${this._id}`
   );
-  return verificationToken; // Return the unhashed token to send via email
+
+  return verificationToken;
 };
 
 // ---------------- Export ---------------- //
