@@ -243,29 +243,49 @@ export const unlikePost = catchAsync(async (req, res, next) => {
 // Route handler to add a comment to a post
 export const addComment = catchAsync(async (req, res, next) => {
   const { text } = req.body;
-  if (!text || text.trim() === '') {
-    return next(new AppError('Comment text cannot be empty', 400));  // Validate that the comment is not empty
+  const postId = req.params.id; // Get post ID from route params
+  const userId = req.user.id;   // Get logged-in user's ID from protect middleware
+
+   if (!text || text.trim() === '') {
+    return next(new AppError('Comment text cannot be empty', 400));
   }
 
   // Create a comment object with user and text
-  const comment = { user: req.user.id, text: text.trim() };
+   const comment = {
+      author: userId, 
+      text: text.trim(),
+  };
 
   // Update the post with the new comment
   const post = await Post.findByIdAndUpdate(
-    req.params.id,
-    { $push: { comments: comment } },
-    { new: true, runValidators: true }
-  ).populate('comments.user', 'firstName lastName profileImage');  // Populate user data for the comment
+      postId,
+      {
+          $push: { comments: comment },
+          // $inc: { commentCount: 1 } // Optionally increment here or rely on pre-save hook
+      },
+      { new: true, runValidators: true } // runValidators for the main Post schema if needed
+  ).populate('comments.author', 'firstName lastName profileImage'); // Populate for response
 
   if (!post) {
-    return next(new AppError('No post found with that ID', 404));  // Handle if post not found
+    return next(new AppError('No post found with that ID', 404));
   }
 
-  // Trigger save to update commentCount via pre-save hook
-  await post.save({ validateBeforeSave: false });
+  // If your Post model has a pre-save hook to update commentCount,
+  // you might need to call post.save() if findByIdAndUpdate doesn't trigger it
+  // for subdocument array changes for count.
+  // However, if you incremented commentCount with $inc, post.save() isn't strictly for the count.
+  // For the sake of ensuring the pre-save hook for commentCount runs (if it exists):
+  // (This save also triggers the likeCount update if likes were modified, but they weren't here)
+  await post.save({ validateBeforeSave: false }); // Call save to trigger hooks
 
-  // Return the updated post with the new comment
-  res.status(201).json({ status: 'success', data: { post } });
+  logger.info(`Comment added to post ${postId} by user ${userId}`);
+
+  res.status(201).json({
+      status: 'success',
+      data: {
+          post // Return the updated post with the new comment
+      }
+  });
 });
 
 // Route handler to delete a comment from a post

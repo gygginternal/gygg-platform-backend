@@ -56,7 +56,12 @@ const signupValidation = [
     body('role').optional().isArray().withMessage('Role must be an array'),
     body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
     body('phoneNo').optional({ checkFalsy: true }).isMobilePhone('any', { strictMode: false }).withMessage('Invalid phone number format'),
-    body('dateOfBirth').optional({checkFalsy: true}).isISO8601().toDate().withMessage('Invalid date of birth format. Use YYYY-MM-DD.'), // Validation for DOB
+    body('dateOfBirth')
+        // If DOB is required on signup:
+        // .notEmpty().withMessage('Date of birth is required.')
+        // If DOB is optional on signup:
+        .optional({ checkFalsy: true })
+        .isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.')
 ];
 router.post('/signup', signupValidation, validateRequest, signup);
 
@@ -98,7 +103,11 @@ const updateMeValidation = [
     body('availability').optional().isJSON().withMessage('Availability must be a valid JSON string if provided.'), // If sending as JSON string from FormData
     body('ratePerHour').optional().isNumeric().toFloat({ min: 0.0 }),
     body('address').optional().isJSON().withMessage('Address must be a valid JSON string if provided.'), // If sending as JSON string
-    body('dateOfBirth').optional({checkFalsy: true}).isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
+    body('dateOfBirth')
+        .optional({ checkFalsy: true }) // Allows empty string or null to pass here, model validator handles logic if value exists
+        .isISO8601()
+        .toDate() // Converts valid ISO8601 string to Date object
+        .withMessage('Invalid date of birth format. Please use YYYY-MM-DD.'),
     body('isTaskerOnboardingComplete').optional().isBoolean().toBoolean(),
     body('isProviderOnboardingComplete').optional().isBoolean().toBoolean(),
     body('password').not().exists().withMessage('Password updates not allowed here.'),

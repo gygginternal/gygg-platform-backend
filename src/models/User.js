@@ -72,6 +72,25 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    dateOfBirth: {
+      type: Date,
+      // required: [true, "Date of birth is required"], // Make required if always needed
+      validate: { // Custom validator for age
+          validator: function(value) {
+              if (!value) return true; // Allow if not provided (unless it's required)
+              const today = new Date();
+              const birthDate = new Date(value);
+              let age = today.getFullYear() - birthDate.getFullYear();
+              const m = today.getMonth() - birthDate.getMonth();
+              if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                  age--;
+              }
+              return age >= 50; // Must be 50 or older
+          },
+          message: props => `User must be at least 50 years old. You entered a date that makes you younger.`
+      }
+    },
+
     // Authentication
     password: {
       type: String,

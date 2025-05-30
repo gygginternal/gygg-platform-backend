@@ -78,9 +78,12 @@ export const updateMe = catchAsync(async (req, res, next) => {
               filteredBody[field] = parseFloat(req.body[field]);
               if (isNaN(filteredBody[field])) delete filteredBody[field]; // Remove if not a valid number
           } else if (field === 'dateOfBirth') {
-              const dob = new Date(req.body[field]);
-              if (!isNaN(dob.getTime())) filteredBody[field] = dob;
-              else logger.warn(`updateMe: Invalid dateOfBirth format: ${req.body[field]}`);
+              const dob = new Date(req.body.dateOfBirth);
+              if (!isNaN(dob.getTime())) {
+                        filteredBody.dateOfBirth = dob;
+                    } else {
+                         logger.warn(`updateMe: Invalid dateOfBirth string received: ${req.body.dateOfBirth}`);
+                    }
           } else if (field === 'isTaskerOnboardingComplete' || field === 'isProviderOnboardingComplete') {
               filteredBody[field] = req.body[field] === 'true' || req.body[field] === true; // Convert string 'true' to boolean
           }
