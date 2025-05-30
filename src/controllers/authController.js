@@ -103,15 +103,8 @@ const sendVerificationEmail = async (user, req) => {
  * @access Public
  */
 export const signup = catchAsync(async (req, res, next) => {
-  const {
-    firstName,
-    lastName,
-    email,
-    password,
-    passwordConfirm,
-    role,
-    phoneNo,
-  } = req.body;
+  const { firstName, lastName, email, password, passwordConfirm, role, phoneNo, dateOfBirth } = req.body;
+  logger.debug('Signup attempt with phoneNo:', phoneNo);
 
   const allowedRoles = ["tasker", "provider"];
   const finalRoles = Array.isArray(role)

@@ -62,36 +62,81 @@ export const updateMe = catchAsync(async (req, res, next) => {
 
   // Explicitly copy allowed fields to avoid prototype pollution and handle types
   allowedFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-          // Handle potential JSON strings for objects/arrays if coming from FormData
-          if ((field === 'address' || field === 'availability') && typeof req.body[field] === 'string') {
-              try { filteredBody[field] = JSON.parse(req.body[field]); }
-              catch (e) { logger.warn(`updateMe: Could not parse JSON string for ${field}:`, req.body[field]); }
-          } else if ((field === 'hobbies' || field === 'skills' || field === 'peoplePreference') && typeof req.body[field] === 'string' && field !== 'peoplePreference') { // peoplePreference is now array too
-              // If hobbies/skills sent as comma-separated string
-              filteredBody[field] = req.body[field].split(',').map(item => item.trim()).filter(item => item);
-          } else if (field === 'peoplePreference' && typeof req.body[field] === 'string') { // peoplePreference could be single string from some forms
-              filteredBody[field] = req.body[field].split(',').map(item => item.trim()).filter(item => item); // Treat as array
-          } else if (Array.isArray(req.body[field])) {
-              filteredBody[field] = req.body[field].map(item => String(item).trim()).filter(item => item); // Ensure array elements are trimmed strings
-          } else if (field === 'ratePerHour') {
-              filteredBody[field] = parseFloat(req.body[field]);
-              if (isNaN(filteredBody[field])) delete filteredBody[field]; // Remove if not a valid number
-          } else if (field === 'dateOfBirth') {
-              const dob = new Date(req.body.dateOfBirth);
-              if (!isNaN(dob.getTime())) {
-                        filteredBody.dateOfBirth = dob;
+        if (req.body[field] !== undefined) {
+            const value = req.body[field];
+
+            switch (field) {
+                case 'address':
+                case 'availability':
+                    if (typeof value === 'string') {
+                        try {
+                            const parsedObject = JSON.parse(value);
+                            // Basic check if it's an actual object after parsing
+                            if (typeof parsedObject === 'object' && parsedObject !== null && !Array.isArray(parsedObject)) {
+                                filteredBody[field] = parsedObject;
+                            } else {
+                                logger.warn(`updateMe: Field '${field}' was a string but not a valid JSON object:`, value);
+                            }
+                        } catch (e) {
+                            logger.warn(`updateMe: Could not parse JSON string for ${field}:`, value, e.message);
+                        }
+                    } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                        filteredBody[field] = value; // Already an object
                     } else {
-                         logger.warn(`updateMe: Invalid dateOfBirth string received: ${req.body.dateOfBirth}`);
+                        logger.warn(`updateMe: Invalid data type for ${field}:`, value);
                     }
-          } else if (field === 'isTaskerOnboardingComplete' || field === 'isProviderOnboardingComplete') {
-              filteredBody[field] = req.body[field] === 'true' || req.body[field] === true; // Convert string 'true' to boolean
-          }
-           else {
-              filteredBody[field] = req.body[field];
-          }
-      }
-  });
+                    break;
+
+                case 'hobbies':
+                case 'skills':
+                case 'peoplePreference': // User model defines this as an array of strings
+                    if (typeof value === 'string') {
+                        // If sent as a comma-separated string, split into an array
+                        filteredBody[field] = value.split(',').map(item => item.trim()).filter(item => item);
+                    } else if (Array.isArray(value)) {
+                        // If already an array, ensure elements are trimmed strings
+                        filteredBody[field] = value.map(item => String(item).trim()).filter(item => item);
+                    } else if (value) { // If it's some other truthy value but not string/array
+                        logger.warn(`updateMe: Invalid data type for ${field}, expected string or array:`, value);
+                    }
+                    // If value is empty string or empty array, it will result in empty array, which is fine
+                    break;
+
+                case 'ratePerHour':
+                    const rate = parseFloat(value);
+                    if (!isNaN(rate) && rate >= 0) {
+                        filteredBody[field] = rate;
+                    } else {
+                        logger.warn(`updateMe: Invalid value for ratePerHour:`, value);
+                    }
+                    break;
+
+                case 'dateOfBirth':
+                    if (value) { // Only process if a value is provided
+                        const dob = new Date(value); // Handles YYYY-MM-DD strings well
+                        if (!isNaN(dob.getTime())) {
+                            filteredBody[field] = dob;
+                        } else {
+                            logger.warn(`updateMe: Invalid dateOfBirth string received: ${value}`);
+                        }
+                    }
+                    break;
+
+                case 'isTaskerOnboardingComplete':
+                case 'isProviderOnboardingComplete':
+                    filteredBody[field] = String(value).toLowerCase() === 'true' || value === true;
+                    break;
+
+                default: // For simple string fields like firstName, lastName, phoneNo, bio
+                    if (typeof value === 'string') {
+                        filteredBody[field] = value.trim();
+                    } else {
+                         filteredBody[field] = value; // For other types or if already processed by multer
+                    }
+                    break;
+            }
+        }
+    });
 
 
   // Handle Profile Image Upload
