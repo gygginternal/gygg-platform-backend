@@ -5,6 +5,7 @@ import { protect, restrictTo } from "../controllers/authController.js";
 import {
   rejectApplicance,
   offerApplication,
+  cancelApplicance,
 } from "../controllers/applicanceController.js";
 
 const router = express.Router();
@@ -19,7 +20,6 @@ router.use(protect); // Protect all routes below this middleware (user must be l
 router.patch(
   "/:applicanceId/reject",
   [
-    restrictTo("provider"), // Only providers can reject an applicance
     param("applicanceId")
       .isMongoId()
       .withMessage("Invalid Applicance ID format"), // Validate applicance ID
@@ -38,6 +38,19 @@ router.patch(
   ],
   validateRequest,
   offerApplication // Calls the controller to handle the offer
+);
+
+// Route to cancel an application
+router.patch(
+  "/:applicanceId/cancel",
+  [
+    restrictTo("tasker"), // Only taskers can cancel their applications
+    param("applicanceId")
+      .isMongoId()
+      .withMessage("Invalid Applicance ID format"), // Validate applicance ID
+  ],
+  validateRequest,
+  cancelApplicance // Calls the controller to handle cancellation
 );
 
 export default router;

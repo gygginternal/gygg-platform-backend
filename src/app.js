@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
@@ -45,6 +46,12 @@ app.use(helmet());
 logger.info("🛡️ Helmet applied for security headers");
 
 // CORS Configuration
+app.use(
+  cors({
+    origin: "*", // Use env in production
+    credentials: true,
+  })
+);
 logger.info(
   `🌐 CORS configured for origin: ${process.env.FRONTEND_URL || "*"}`
 );
@@ -75,7 +82,7 @@ logger.info("🧼 Input sanitization middleware applied");
 logger.info("🔗 Mounting API routes...");
 app.get("/", (req, res) => res.send("API is running..."));
 
-app.use("/api/v1/applicances", applicanceRoutes); // Mount the applicance routes
+app.use("/api/v1/applications", applicanceRoutes); // Mount the applicance routes
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/taskers", taskersRoutes);
 app.use("/api/v1/gigs", gigRouter);

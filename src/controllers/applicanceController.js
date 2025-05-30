@@ -3,6 +3,7 @@ import { Gig } from "../models/Gig.js";
 import Contract from "../models/Contract.js";
 import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/AppError.js";
+import app from "../app.js";
 
 export const listGigApplications = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
@@ -45,6 +46,19 @@ export const applyToGig = catchAsync(async (req, res, next) => {
 
   // Check if the applicance already exists
   const existingApplicance = await Applicance.findOne({ user, gig: gigId });
+
+  if (existingApplicance.status === "cancelled") {
+    existingApplicance.status = "pending"; // Reopen the application if it was cancelled
+    await existingApplicance.save();
+
+    return res.status(201).json({
+      status: "success",
+      data: {
+        applicance: existingApplicance,
+      },
+    });
+  }
+
   if (existingApplicance) {
     return next(new AppError("You have already applied for this gig.", 400));
   }
@@ -131,6 +145,36 @@ export const rejectApplicance = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: "success",
+    data: {
+      applicance,
+    },
+  });
+});
+
+export const cancelApplicance = catchAsync(async (req, res, next) => {
+  const { applicanceId } = req.params;
+
+  // Find the application by ID
+  const applicance = await Applicance.findById(applicanceId);
+
+  if (!applicance) {
+    return next(new AppError("Applicance not found.", 404));
+  }
+
+  // Check if the logged-in user is the owner of the application
+  if (applicance.user.toString() !== req.user._id.toString()) {
+    return next(
+      new AppError("You are not authorized to cancel this application.", 403)
+    );
+  }
+
+  // Update the application status to "cancelled"
+  applicance.status = "cancelled";
+  await applicance.save();
+
+  res.status(200).json({
+    status: "success",
+    message: "Application successfully cancelled.",
     data: {
       applicance,
     },
