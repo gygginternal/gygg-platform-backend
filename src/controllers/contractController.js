@@ -1,10 +1,12 @@
 import mongoose from "mongoose";
+import { Gig } from "../models/Gig.js";
 import Contract from "../models/Contract.js";
 import Payment from "../models/Payment.js";
 import User from "../models/User.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
+import Applicance from "../models/Applicance.js";
 
 /**
  * Helper function to verify if the user is part of the contract.
@@ -328,5 +330,51 @@ export const cancelContract = catchAsync(async (req, res, next) => {
     data: {
       contract,
     },
+  });
+});
+
+export const deleteContract = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  // Find the contract by ID
+  const contract = await Contract.findById(id);
+
+  if (!contract) {
+    return next(new AppError("Contract not found.", 404));
+  }
+
+  // Check if the logged-in user is authorized to delete the contract
+  if (contract.provider._id.toString() !== req.user._id.toString()) {
+    return next(
+      new AppError("You are not authorized to delete this contract.", 403)
+    );
+  }
+
+  // Update the gig's status to "unassigned" if the contract is deleted
+  const gig = await Gig.findById(contract.gig);
+  if (gig) {
+    gig.status = "unassigned";
+    gig.assignedTasker = null; // Clear the assigned tasker
+    await gig.save();
+  }
+
+  // Find the related application and set its status to "pending"
+  const application = await Applicance.findOne({
+    gig: contract.gig,
+    user: contract.tasker,
+  });
+
+  if (application) {
+    application.status = "pending";
+    await application.save();
+  }
+
+  // Delete the contract from the database
+  await Contract.findByIdAndDelete(contract._id);
+
+  res.status(200).json({
+    status: "success",
+    message:
+      "Contract successfully deleted. Related application status set to pending.",
   });
 });

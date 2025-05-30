@@ -8,8 +8,11 @@ import app from "../app.js";
 export const listGigApplications = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
 
-  // Check if there are any applications for the gig
-  const applications = await Applicance.find({ gig: gigId }).populate("user");
+  // Fetch applications for the gig, excluding those with status "cancelled"
+  const applications = await Applicance.find({
+    gig: gigId,
+    status: { $ne: "cancelled" },
+  }).populate("user");
 
   // Format the response to match the desired structure
   const formattedApplications = applications.map((application) => {
