@@ -8,7 +8,8 @@ import {
   updateGig, // Update a gig by ID
   deleteGig, // Delete a gig by ID
   acceptGig, // Tasker accepts a gig
-  matchGigsForTasker, // Match gigs to a tasker based on their hobbies and personality traits
+  matchGigsForTasker,
+  getMyApplicationForGig, // Match gigs to a tasker based on their hobbies and personality traits
 } from "../controllers/gigController.js";
 
 import { protect, restrictTo } from "../controllers/authController.js"; // Auth middlewares to secure and authorize access
@@ -211,6 +212,16 @@ router.get(
   ],
   validateRequest,
   listGigApplications // Calls the controller to list applications
+);
+
+router.get(
+  "/:gigId/my-application",
+  [
+    restrictTo("tasker"), // Only taskers can view their application
+    param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
+  ],
+  validateRequest,
+  getMyApplicationForGig // Calls the controller to handle the request
 );
 
 /**
