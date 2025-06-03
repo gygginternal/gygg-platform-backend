@@ -34,6 +34,7 @@ export const getMyApplicationForGig = catchAsync(async (req, res, next) => {
     applicationStatus: application.status,
     createdAt: application.createdAt,
   };
+  console.log({ formattedApplication });
 
   res.status(200).json({
     status: "success",
@@ -320,7 +321,7 @@ export const acceptGig = catchAsync(async (req, res, next) => {
       provider: gig.postedBy.id,
       tasker: taskerId,
       agreedCost: gig.cost,
-      status: "pending_payment",
+      status: "active",
     });
     logger.info(`Contract ${newContract._id} created for Gig ${gigId}`);
     const updatedGigWithPopulatedTasker = await Gig.findById(gigId);

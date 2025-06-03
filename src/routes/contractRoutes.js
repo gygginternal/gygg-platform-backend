@@ -11,10 +11,17 @@ import {
   requestRevision, // Import the specific function
   cancelContract,
   deleteContract, // Import the specific function
+  getMyContracts, // Import the specific function
 } from "../controllers/contractController.js"; // Create this controller
 
 const router = express.Router();
 router.use(protect); // Apply 'protect' middleware to all routes in this router
+
+router.get(
+  "/my-contracts",
+  restrictTo("provider", "tasker"), // Accessible to both providers and taskers
+  getMyContracts // Calls the controller to handle the request
+);
 
 // --- Route: Get contract(s) ---
 // @route   GET /api/v1/contracts?gigId=...
@@ -108,10 +115,6 @@ router.delete(
   deleteContract
 ); // Calls the controller to handle deletion
 
-// --- Future Route Placeholders (if needed) ---
-// PATCH /api/v1/contracts/:id/cancel
-// router.patch('/:id/cancel', protect, restrictTo('provider', 'tasker'), cancelContractController);
-
-// Add other status updates (cancel, dispute) as needed
+// Route to get all contracts of the current logged-in user
 
 export default router;

@@ -7,6 +7,7 @@ import {
   getPaymentIntentForContract, // Import the new controller function
   releasePaymentForContract,
   checkIfContractIsReleasable,
+  getPayments,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -17,6 +18,17 @@ const router = express.Router();
  * All routes below this middleware require the user to be logged in.
  */
 router.use(protect); // Protect all routes below this middleware (user must be logged in)
+
+// Route to get all payments
+router.get(
+  "/",
+  [
+    restrictTo("admin", "provider", "tasker"), // Accessible to admin, provider, and tasker
+    param("status").optional().isString().withMessage("Invalid status format"), // Optional status filter
+  ],
+  validateRequest,
+  getPayments // Calls the controller to handle payment retrieval
+);
 
 /**
  * --- Payment Routes ---

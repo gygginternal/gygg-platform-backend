@@ -19,7 +19,7 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
     const user = application.user;
     return {
       id: application._id,
-      name: `${user.firstName}.${user.lastName.charAt(0)}`, // Format name as "FirstName.T"
+      name: `${user.firstName} ${user.lastName}`, // Format name as "FirstName.T"
       location: `${user.address.city}, ${user.address.state}`, // Combine city and state
       description: user.bio, // Use bio for the description
       services: user.skills, // Use skills as services
@@ -50,19 +50,19 @@ export const applyToGig = catchAsync(async (req, res, next) => {
   // Check if the applicance already exists
   const existingApplicance = await Applicance.findOne({ user, gig: gigId });
 
-  if (existingApplicance.status === "cancelled") {
-    existingApplicance.status = "pending"; // Reopen the application if it was cancelled
-    await existingApplicance.save();
-
-    return res.status(201).json({
-      status: "success",
-      data: {
-        applicance: existingApplicance,
-      },
-    });
-  }
-
   if (existingApplicance) {
+    if (existingApplicance.status === "cancelled") {
+      existingApplicance.status = "pending"; // Reopen the application if it was cancelled
+      await existingApplicance.save();
+
+      return res.status(201).json({
+        status: "success",
+        data: {
+          applicance: existingApplicance,
+        },
+      });
+    }
+
     return next(new AppError("You have already applied for this gig.", 400));
   }
 
@@ -119,7 +119,7 @@ export const offerApplication = catchAsync(async (req, res, next) => {
     provider: gig.postedBy, // Assuming `postedBy` is the provider
     tasker: application.user, // The tasker assigned to the gig
     agreedCost: gig.cost, // Use the gig's cost as the agreed cost
-    status: "pending_payment", // Initial status of the contract
+    status: "active", // Initial status of the contract
   });
 
   res.status(200).json({

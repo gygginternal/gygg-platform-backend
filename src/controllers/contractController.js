@@ -8,6 +8,75 @@ import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import Applicance from "../models/Applicance.js";
 
+export const getMyContracts = catchAsync(async (req, res, next) => {
+  const userId = req.user._id; // Get the logged-in user's ID
+
+  // Pagination parameters
+  const page = parseInt(req.query.page, 10) || 1; // Default to page 1
+  const limit = parseInt(req.query.limit, 10) || 10; // Default to 10 results per page
+  const skip = (page - 1) * limit;
+
+  // Filters
+  const { name, status } = req.query;
+
+  // Build the query object
+  const query = {
+    $or: [{ provider: userId }, { tasker: userId }],
+  };
+
+  // Add filters for gig name
+  if (name) {
+    query["gig.title"] = { $regex: name, $options: "i" }; // Case-insensitive search
+  }
+
+  // Add filters for status (accepts an array or a single value)
+  if (status) {
+    const statusArray = Array.isArray(status) ? status : [status];
+    console.log({ statusArray });
+
+    query["status"] = { $in: statusArray }; // Match any of the provided statuses
+  }
+
+  // Fetch contracts where the user is either the provider or the tasker
+  const contracts = await Contract.find(query)
+    .populate("gig", "title category cost status") // Populate gig details
+    .populate("provider", "firstName lastName email") // Populate provider details
+    .populate("tasker", "firstName lastName email") // Populate tasker details
+    .skip(skip)
+    .limit(limit);
+
+  // Get the total count of contracts for the user with the applied filters
+  const totalContracts = await Contract.countDocuments(query);
+
+  // Format the response
+  const formattedContracts = contracts.map((contract) => ({
+    id: contract._id,
+    gigTitle: contract.gig?.title,
+    gigId: contract.gig?._id,
+    gigCategory: contract.gig?.category,
+    gigCost: contract.gig?.cost,
+    gigStatus: contract.gig?.status,
+    provider: [contract.provider?.firstName, contract.provider?.lastName].join(
+      " "
+    ),
+    tasker: [contract.tasker?.firstName, contract.tasker?.lastName].join(" "),
+    status: contract.status,
+    createdAt: contract.createdAt,
+    updatedAt: contract.updatedAt,
+  }));
+
+  res.status(200).json({
+    status: "success",
+    results: formattedContracts.length,
+    total: totalContracts,
+    currentPage: page,
+    totalPages: Math.ceil(totalContracts / limit),
+    data: {
+      contracts: formattedContracts,
+    },
+  });
+});
+
 /**
  * Helper function to verify if the user is part of the contract.
  * @param {string} contractId - The ID of the contract.

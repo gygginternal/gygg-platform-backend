@@ -9,6 +9,51 @@ import mongoose from "mongoose";
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+export const getPayments = catchAsync(async (req, res, next) => {
+  const { status, payer, payee, page = 1, limit = 10 } = req.query;
+  console.log({ limit, page });
+
+  // Build the query object
+  const query = {};
+
+  query.status = "succeeded"; // Filter by payment status
+
+  if (payer) {
+    query.payer = payer; // Filter by payer ID
+  }
+
+  if (payee) {
+    query.payee = payee; // Filter by payee ID
+  }
+
+  // Pagination parameters
+  const pageNumber = parseInt(page, 10) || 1; // Default to page 1
+  const pageLimit = parseInt(limit, 10) || 10; // Default to 10 results per page
+  const skip = (pageNumber - 1) * pageLimit;
+
+  // Fetch payments based on the query with pagination
+  const payments = await Payment.find(query)
+    .populate("contract", "title") // Populate contract details
+    .populate("payer", "firstName lastName email") // Populate payer details
+    .populate("payee", "firstName lastName email") // Populate payee details
+    .skip(skip)
+    .limit(pageLimit);
+
+  // Get the total count of payments for the query
+  const totalPayments = await Payment.countDocuments(query);
+
+  res.status(200).json({
+    status: "success",
+    results: payments.length,
+    total: totalPayments,
+    currentPage: pageNumber,
+    totalPages: Math.ceil(totalPayments / pageLimit),
+    data: {
+      payments,
+    },
+  });
+});
+
 export const checkIfContractIsReleasable = catchAsync(
   async (req, res, next) => {
     const { contractId } = req.params;
@@ -121,40 +166,37 @@ export const getPaymentIntentForContract = catchAsync(
 export const releasePaymentForContract = catchAsync(async (req, res, next) => {
   const { contractId } = req.params;
 
-  // Retrieve the payment details for the contract
-  const payment = await Payment.findOne({ contract: contractId }).populate(
-    "payee"
-  );
+  // Find the payment associated with the contract
+  const payment = await Payment.findOne({ contract: contractId });
 
   if (!payment) {
-    return next(new AppError("Payment not found for this contract.", 404));
+    return next(
+      new AppError("Payment not found for the specified contract.", 404)
+    );
   }
 
-  // Create a payout using the payment details
-  const acc = await stripe.accounts.retrieve(payment.payee.stripeAccountId);
-
-  const payout = await stripe.payouts.create(
-    {
-      amount: payment.amount,
-      currency: payment.currency,
-    },
-    {
-      stripeAccount: payment.payee.stripeAccountId,
-    }
-  );
-
-  // Update the payment status to "released"
-  payment.status = payout.status;
-  payment.stripePayoutId = payout.id;
-  payment.status = "pending";
-
+  // Update the payment status to "succeeded"
+  payment.status = "succeeded";
+  payment.succeededAt = Date.now();
   await payment.save();
+
+  // Find the related contract and mark it as "completed"
+  const contract = await Contract.findById(contractId);
+
+  if (!contract) {
+    return next(new AppError("Contract not found.", 404));
+  }
+
+  contract.status = "completed";
+  contract.completedAt = Date.now();
+  await contract.save();
 
   res.status(200).json({
     status: "success",
-    message: "Payment released successfully.",
+    message: "Payment successfully released and contract marked as completed.",
     data: {
-      payout,
+      payment,
+      contract,
     },
   });
 });
@@ -183,8 +225,8 @@ export const createPaymentIntentForContract = catchAsync(
 
     // Ensure that the contract is in a valid status for payment
     if (
-      !["pending_payment", "failed"].includes(contract.status) &&
-      contract.status !== "pending_contract"
+      !["active", "failed"].includes(contract.status) &&
+      contract.status !== "active"
     ) {
       return next(
         new AppError(
