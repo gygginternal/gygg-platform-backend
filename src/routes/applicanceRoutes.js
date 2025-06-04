@@ -61,7 +61,6 @@ router.patch(
 router.get(
   "/top-match",
   restrictTo("provider", "tasker"), // Accessible to providers and taskers
-  validateRequest,
   topMatchApplicances // Calls the controller to handle the request
 );
 

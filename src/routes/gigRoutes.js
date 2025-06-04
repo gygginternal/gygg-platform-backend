@@ -159,7 +159,6 @@ router
  */
 router.get(
   "/top-match",
-  validateRequest,
   topMatchGigs // Calls the controller to handle the request
 );
 
