@@ -38,6 +38,8 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
 });
 
 export const applyToGig = catchAsync(async (req, res, next) => {
+  console.log("ok");
+
   const { gigId } = req.params;
   const user = req.user._id; // Logged-in tasker
 
@@ -181,5 +183,113 @@ export const cancelApplicance = catchAsync(async (req, res, next) => {
     data: {
       applicance,
     },
+  });
+});
+
+export const topMatchApplicances = catchAsync(async (req, res, next) => {
+  const user = req.user;
+  const userHobbies = user.hobbies || [];
+  const userPreferences = user.peoplePreference || [];
+  const userId = user._id;
+
+  console.log(
+    `topMatchApplicances: User ${userId} searching for top appliances. Hobbies: [${userHobbies.join(
+      ", "
+    )}], Preferences: [${userPreferences.join(", ")}]`
+  );
+
+  const pipeline = [];
+
+  // Match appliances associated with gigs
+  pipeline.push({
+    $lookup: {
+      from: "gigs", // MongoDB collection for gigs
+      localField: "gig",
+      foreignField: "_id",
+      as: "gigDetails",
+    },
+  });
+
+  // Unwind gigDetails array to make it a single object
+  pipeline.push({
+    $unwind: "$gigDetails",
+  });
+
+  // Lookup the user who applied for the appliance
+  pipeline.push({
+    $lookup: {
+      from: "users", // MongoDB collection for users
+      localField: "user",
+      foreignField: "_id",
+      as: "applicant",
+    },
+  });
+
+  // Unwind applicant array to make it a single object
+  pipeline.push({
+    $unwind: "$applicant",
+  });
+
+  // Calculate matchScore based on the overlap between the applicant's attributes and the user's attributes
+  pipeline.push({
+    $addFields: {
+      matchScore: {
+        $add: [
+          {
+            $size: {
+              $setIntersection: [
+                { $ifNull: ["$applicant.hobbies", []] }, // Default to empty array if null
+                userHobbies,
+              ],
+            },
+          }, // Overlap in hobbies
+          {
+            $size: {
+              $setIntersection: [
+                { $ifNull: ["$applicant.peoplePreference", []] }, // Default to empty array if null
+                userPreferences,
+              ],
+            },
+          }, // Overlap in peoplePreference
+        ],
+      },
+    },
+  });
+
+  // Sort by matchScore in descending order
+  pipeline.push({ $sort: { matchScore: -1, createdAt: -1 } });
+
+  // Limit to top 3 appliances
+  pipeline.push({ $limit: 3 });
+
+  // Project fields to match the desired response structure
+  pipeline.push({
+    $project: {
+      id: "$_id", // Use MongoDB's _id as the id
+      description: {
+        $concat: [
+          "$applicant.firstName",
+          ". ",
+          { $substr: ["$applicant.lastName", 0, 1] },
+          " applied for ",
+          "$gigDetails.title",
+        ],
+      },
+      applianceId: "$_id",
+      gigId: "$gigDetails._id", // Include the gig ID
+      matchScore: 1, // Include matchScore in the response
+    },
+  });
+
+  const matchedApplicances = await Applicance.aggregate(pipeline);
+
+  console.log(
+    `topMatchApplicances: Found ${matchedApplicances.length} appliances for user ${userId}.`
+  );
+
+  res.status(200).json({
+    status: "success",
+    results: matchedApplicances.length,
+    data: matchedApplicances,
   });
 });

@@ -51,7 +51,6 @@ const gigSchema = new mongoose.Schema(
     category: {
       type: String,
       required: [true, "A gig must have a category"],
-      enum: CATEGORY_ENUM,
     },
     subcategory: {
       type: String,

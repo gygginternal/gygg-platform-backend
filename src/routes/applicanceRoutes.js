@@ -6,6 +6,7 @@ import {
   rejectApplicance,
   offerApplication,
   cancelApplicance,
+  topMatchApplicances,
 } from "../controllers/applicanceController.js";
 
 const router = express.Router();
@@ -51,6 +52,17 @@ router.patch(
   ],
   validateRequest,
   cancelApplicance // Calls the controller to handle cancellation
+);
+
+// --- Route: Get Top Matching Appliances ---
+// @route   GET /api/v1/applicances/top-match
+// @desc    Get the top 3 matching appliances for the logged-in user
+// @access  Private (only accessible to users)
+router.get(
+  "/top-match",
+  restrictTo("provider", "tasker"), // Accessible to providers and taskers
+  validateRequest,
+  topMatchApplicances // Calls the controller to handle the request
 );
 
 export default router;

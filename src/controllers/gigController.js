@@ -195,6 +195,7 @@ export const createGig = catchAsync(async (req, res, next) => {
     duration,
     skills,
     postedBy: req.user.id, // Set the poster from the authenticated user
+    status: "open",
   };
 
   const newGig = await Gig.create(newGigData);
@@ -518,3 +519,54 @@ export const matchGigsForTasker = catchAsync(async (req, res, next) => {
     .status(200)
     .json({ status: "success", results: gigs.length, data: { gigs } });
 });
+
+export const getMyGigsWithNoApplications = catchAsync(
+  async (req, res, next) => {
+    const userId = req.user._id; // Logged-in user's ID
+
+    // Find gigs posted by the user
+    const gigs = await Gig.aggregate([
+      {
+        $match: {
+          postedBy: userId, // Match gigs posted by the logged-in user
+          status: "open", // Only include gigs with status "open"
+        },
+      },
+      {
+        $lookup: {
+          from: "applicances", // Lookup applications for the gig
+          localField: "_id",
+          foreignField: "gig",
+          as: "applications",
+        },
+      },
+      {
+        $sort: { createdAt: -1 }, // Sort by creation date (most recent first)
+      },
+      {
+        $limit: 3, // Limit to 3 gigs
+      },
+      {
+        $project: {
+          id: "$_id", // Use MongoDB's _id as the id
+          title: 1,
+          category: 1,
+          cost: 1,
+          location: {
+            $concat: ["$location.city", ", ", "$location.state"], // Combine city and state
+          },
+          description: 1,
+          createdAt: 1,
+        },
+      },
+    ]);
+
+    res.status(200).json({
+      status: "success",
+      results: gigs.length,
+      data: {
+        gigs,
+      },
+    });
+  }
+);

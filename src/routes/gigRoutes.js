@@ -9,7 +9,8 @@ import {
   deleteGig, // Delete a gig by ID
   acceptGig, // Tasker accepts a gig
   matchGigsForTasker,
-  getMyApplicationForGig, // Match gigs to a tasker based on their hobbies and personality traits
+  getMyApplicationForGig,
+  getMyGigsWithNoApplications, // Match gigs to a tasker based on their hobbies and personality traits
 } from "../controllers/gigController.js";
 
 import { protect, restrictTo } from "../controllers/authController.js"; // Auth middlewares to secure and authorize access
@@ -17,6 +18,7 @@ import {
   applyToGig,
   listGigApplications,
 } from "../controllers/applicanceController.js";
+import { topMatchGigs } from "../controllers/taskersController.js";
 
 const router = express.Router();
 
@@ -31,19 +33,7 @@ const router = express.Router();
 const gigBodyValidation = [
   body("title").notEmpty().trim().escape().isLength({ max: 100 }),
   body("description").notEmpty().trim().escape(),
-  body("category")
-    .notEmpty()
-    .isIn([
-      "Household Services",
-      "Personal Assistant",
-      "Pet Care",
-      "Technology and Digital Assistance",
-      "Event Support",
-      "Moving and Organization",
-      "Creative and Costume Tasks",
-      "General Errands",
-      "Other",
-    ]),
+  body("category").notEmpty(),
   body("subcategory").optional().trim().escape(),
   body("cost")
     .isNumeric()
@@ -116,6 +106,12 @@ router.use(protect);
  */
 
 // Get all gigs (any logged-in user) OR create a gig (only provider)
+router.get(
+  "/awaiting-posted-gig",
+  restrictTo("provider"), // Only providers can access this route
+  getMyGigsWithNoApplications // Calls the controller to handle the request
+);
+
 router
   .route("/")
   .get(
@@ -161,6 +157,12 @@ router
  * Allow users to interact with specific gigs.
  * Permissions to update/delete are checked within controller (e.g., owner/admin).
  */
+router.get(
+  "/top-match",
+  validateRequest,
+  topMatchGigs // Calls the controller to handle the request
+);
+
 router
   .route("/:id")
   .get(

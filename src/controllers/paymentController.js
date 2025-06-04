@@ -255,7 +255,7 @@ export const createPaymentIntentForContract = catchAsync(
 
     // Calculate the application fee based on the platform's percentage and fixed fee
     const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-    const fixedFeeCents = 0; // Define the fixed fee ($5.00) in cents
+    const fixedFeeCents = 500; // Define the fixed fee ($5.00) in cents
 
     // Calculate percentage part
     const percentageFee = Math.round(amountInCents * (feePercentage / 100));
