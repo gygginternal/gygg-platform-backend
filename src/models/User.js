@@ -49,12 +49,12 @@ const userSchema = new mongoose.Schema(
     // Basic Info
     firstName: {
       type: String,
-      required: [true, "First name is required"],
+      // required: [true, "First name is required"], // collected on Onboarding
       trim: true,
     },
     lastName: {
       type: String,
-      required: [true, "Last name is required"],
+      // required: [true, "Last name is required"], // collected on Onboarding
       trim: true,
     },
     email: {

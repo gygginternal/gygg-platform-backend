@@ -36,8 +36,8 @@ const router = express.Router();
  * ===============================
  */
 const signupValidation = [
-    body('firstName').notEmpty().withMessage('First name is required').trim().escape(),
-    body('lastName').notEmpty().withMessage('Last name is required').trim().escape(),
+    // body('firstName').notEmpty().withMessage('First name is required').trim().escape(),
+    // body('lastName').notEmpty().withMessage('Last name is required').trim().escape(),
     body('email').isEmail().withMessage('Please provide a valid email').normalizeEmail(),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
     body('passwordConfirm').notEmpty().withMessage('Please confirm your password')
