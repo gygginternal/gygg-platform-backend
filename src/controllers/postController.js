@@ -1,8 +1,10 @@
 // Importing required modules
+import User from '../models/User.js'; 
 import Post from '../models/Post.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
 import mongoose from 'mongoose';
+import logger from '../utils/logger.js'; 
 
 // Utility function to check if the user is the owner of the post or has admin privileges
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
