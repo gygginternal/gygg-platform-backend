@@ -34,7 +34,6 @@ const chatMessageSchema = new mongoose.Schema(
     },
     htmlContent: {
       type: String, // Store the message content
-      required: [true, "Message content cannot be empty."], // Ensure message is not empty
       trim: true, // Remove leading/trailing spaces
     },
 
@@ -67,7 +66,7 @@ chatMessageSchema.pre(/^find/, function (next) {
 });
 
 // Create the ChatMessage model from the schema
-const ChatMessage = mongoose.model("ChatMessage", chatMessageSchema);
+export const ChatMessage = mongoose.model("ChatMessage", chatMessageSchema);
 
 // Export the model for use in other parts of the application
 export default ChatMessage;
