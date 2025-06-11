@@ -1,12 +1,23 @@
-import express from 'express';
-import { body, param, query } from 'express-validator';
-import validateRequest from '../middleware/validateRequest.js';
+import express from "express";
+import multer from "multer";
+import { body, param, query } from "express-validator";
+import validateRequest from "../middleware/validateRequest.js";
 import {
-    getPostFeed, getPost,  getUserPosts, createPost, updatePost, deletePost, likePost, unlikePost, addComment, deleteComment
-} from '../controllers/postController.js';
-import { protect } from '../controllers/authController.js'; // Middleware to protect routes that require authentication
+  getPostFeed,
+  getPost,
+  getUserPosts,
+  createPost,
+  updatePost,
+  deletePost,
+  likePost,
+  unlikePost,
+  addComment,
+  deleteComment,
+} from "../controllers/postController.js";
+import { protect } from "../controllers/authController.js"; // Middleware to protect routes that require authentication
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() }); // Configure multer for file upload
 
 /**
  * ================================
@@ -16,7 +27,6 @@ const router = express.Router();
  */
 router.use(protect); // Protect all routes below this middleware (user must be logged in)
 
-
 /**
  * ================================
  *        POST FEED & CREATION ROUTES
@@ -25,27 +35,31 @@ router.use(protect); // Protect all routes below this middleware (user must be l
  */
 
 // Route to get the feed of all posts with query parameter validation (page, limit, sort, location-based filters)
-router.route('/')
-    .get([ 
-        query('page').optional().isInt({ min: 1 }).toInt(),
-        query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
-        query('sort').optional().isIn(['recents', 'trending', 'near_me']),
-        query('lat').optional().isFloat(),
-        query('lng').optional().isFloat(),
-        query('distance').optional().isFloat({ min: 0.1 }),
-    ], validateRequest, getPostFeed) // Basic checks, controller handles complex logic like requiring lat/lng
-    .post([ // Validation for creating a post
-        body('content').notEmpty().withMessage('Post content cannot be empty').trim().escape().isLength({ max: 2000 }),
-        body('media').optional().isArray(),
-        body('media.*').optional().isURL().withMessage('Invalid media URL format'), // Basic URL check
-        body('tags').optional().isArray(),
-        body('tags.*').optional().isString().trim().escape().toLowerCase(),
-        body('location').optional().isObject(),
-        body('location.coordinates').optional().isArray({ min: 2, max: 2 }).withMessage('Coordinates must be an array of [longitude, latitude]'),
-        body('location.coordinates.*').optional().isFloat(),
-        body('location.address').optional().trim().escape(),
-    ], validateRequest, createPost);
+router
+  .route("/")
+  .get(
+    [
+      query("page").optional().isInt({ min: 1 }).toInt(),
+      query("limit").optional().isInt({ min: 1, max: 100 }).toInt(),
+      query("sort").optional().isIn(["recents", "trending", "near_me"]),
+      query("lat").optional().isFloat(),
+      query("lng").optional().isFloat(),
+      query("distance").optional().isFloat({ min: 0.1 }),
+    ],
+    validateRequest,
+    getPostFeed
+  );
 
+/**
+ * Route to create a new post with image upload.
+ */
+router.post(
+  "/",
+  upload.single("file"), // Middleware to handle single file upload
+  [body("content").notEmpty().withMessage("Content cannot be empty").trim()],
+  validateRequest,
+  createPost
+);
 
 /**
  * ================================
@@ -56,26 +70,30 @@ router.route('/')
  */
 
 // Route to get a specific post by its ID
-router.route('/:id')
+router
+  .route("/:id")
   .get(
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
+    param("id").isMongoId().withMessage("Invalid Post ID format"),
     validateRequest,
     getPost
   )
-  .patch( // Permissions checked in controller
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
-    [ // Validation for updating post
-      body('content').optional().trim().escape().isLength({ max: 2000 }),
-      body('media').optional().isArray(),
-      body('media.*').optional().isURL(),
-      body('tags').optional().isArray(),
-      body('tags.*').optional().isString().trim().escape().toLowerCase(),
+  .patch(
+    // Permissions checked in controller
+    param("id").isMongoId().withMessage("Invalid Post ID format"),
+    [
+      // Validation for updating post
+      body("content").optional().trim().escape().isLength({ max: 2000 }),
+      body("media").optional().isArray(),
+      body("media.*").optional().isURL(),
+      body("tags").optional().isArray(),
+      body("tags.*").optional().isString().trim().escape().toLowerCase(),
     ],
     validateRequest,
     updatePost
   )
-  .delete( // Permissions checked in controller
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
+  .delete(
+    // Permissions checked in controller
+    param("id").isMongoId().withMessage("Invalid Post ID format"),
     validateRequest,
     deletePost
   );
@@ -96,13 +114,18 @@ router.route('/:id')
  * The actual fetching logic and any permission handling (e.g., if posts should only be visible to certain users)
  * should be managed inside the getUserPosts controller.
  */
-router.get('/user/:userId', [ // Example path: /api/v1/posts/user/:userId
+router.get(
+  "/user/:userId",
+  [
+    // Example path: /api/v1/posts/user/:userId
     protect, // Or make it public if user profiles are public
-    param('userId').isMongoId().withMessage('Invalid user ID format'),
-    query('page').optional().isInt({ min: 1 }).toInt(),
-    query('limit').optional().isInt({ min: 1, max: 50 }).toInt(),
-], validateRequest, getUserPosts);
-
+    param("userId").isMongoId().withMessage("Invalid user ID format"),
+    query("page").optional().isInt({ min: 1 }).toInt(),
+    query("limit").optional().isInt({ min: 1, max: 50 }).toInt(),
+  ],
+  validateRequest,
+  getUserPosts
+);
 
 /**
  * ================================
@@ -112,15 +135,20 @@ router.get('/user/:userId', [ // Example path: /api/v1/posts/user/:userId
  */
 
 // Route to like a post
-router.patch('/:id/like', [
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
-], validateRequest, likePost);
+router.patch(
+  "/:id/like",
+  [param("id").isMongoId().withMessage("Invalid Post ID format")],
+  validateRequest,
+  likePost
+);
 
 // Route to unlike a post
-router.patch('/:id/unlike', [
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
-], validateRequest, unlikePost);
-
+router.patch(
+  "/:id/unlike",
+  [param("id").isMongoId().withMessage("Invalid Post ID format")],
+  validateRequest,
+  unlikePost
+);
 
 /**
  * ================================
@@ -131,15 +159,31 @@ router.patch('/:id/unlike', [
  */
 
 // Route to add a comment to a specific post
-router.post('/:id/comments', [
-    param('id').isMongoId().withMessage('Invalid Post ID format'),
-    body('text').notEmpty().withMessage('Comment text cannot be empty').trim().escape().isLength({ max: 1000 }),
-], validateRequest, addComment);
+router.post(
+  "/:id/comments",
+  [
+    param("id").isMongoId().withMessage("Invalid Post ID format"),
+    body("text")
+      .notEmpty()
+      .withMessage("Comment text cannot be empty")
+      .trim()
+      .escape()
+      .isLength({ max: 1000 }),
+  ],
+  validateRequest,
+  addComment
+);
 
 // Route to delete a specific comment from a post
-router.delete('/:postId/comments/:commentId', [ // Permissions checked in controller
-    param('postId').isMongoId().withMessage('Invalid Post ID format'),
-    param('commentId').isMongoId().withMessage('Invalid Comment ID format'),
-], validateRequest, deleteComment);
+router.delete(
+  "/:postId/comments/:commentId",
+  [
+    // Permissions checked in controller
+    param("postId").isMongoId().withMessage("Invalid Post ID format"),
+    param("commentId").isMongoId().withMessage("Invalid Comment ID format"),
+  ],
+  validateRequest,
+  deleteComment
+);
 
 export default router;
