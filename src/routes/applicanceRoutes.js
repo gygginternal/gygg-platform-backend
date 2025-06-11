@@ -7,6 +7,7 @@ import {
   offerApplication,
   cancelApplicance,
   topMatchApplicances,
+  createOffer, // Import createOffer controller
 } from "../controllers/applicanceController.js";
 
 const router = express.Router();
@@ -29,16 +30,17 @@ router.patch(
   rejectApplicance // Calls the controller to handle rejection
 );
 
-router.patch(
+// Route to create an offer for an application
+router.post(
   "/:applicationId/offer",
   [
-    restrictTo("provider"), // Only providers can offer an application
+    restrictTo("provider"), // Only providers can create an offer
     param("applicationId")
       .isMongoId()
       .withMessage("Invalid Application ID format"), // Validate application ID
   ],
   validateRequest,
-  offerApplication // Calls the controller to handle the offer
+  createOffer // Calls the controller to handle offer creation
 );
 
 // Route to cancel an application

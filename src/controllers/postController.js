@@ -286,7 +286,9 @@ export const unlikePost = catchAsync(async (req, res, next) => {
 
   // Remove the user's ID from the likes array and decrement the likeCount
   post.likes = post.likes.filter((id) => id.toString() !== userId);
-  post.likeCount -= 1;
+  if (post.likeCount > 0) {
+    post.likeCount -= 1;
+  }
 
   // Save the updated post
   await post.save();

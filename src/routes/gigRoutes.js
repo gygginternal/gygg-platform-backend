@@ -19,12 +19,12 @@ import {
   listGigApplications,
 } from "../controllers/applicanceController.js";
 import { topMatchGigs } from "../controllers/taskersController.js";
+import { getOfferByApplication } from "../controllers/offerController.js"; // Import the controller
 
 const router = express.Router();
 
 /**
  * ===============================
- *      VALIDATION DEFINITIONS
  * ===============================
  * Reusable field validation rules for gig creation and updates.
  */
@@ -104,6 +104,16 @@ router.use(protect);
  * ===============================
  * Allow users to view and manage gigs.
  */
+
+// Route to get the offer of a gig
+router.get(
+  "/:gigId/offer",
+  [
+    param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
+  ],
+  validateRequest,
+  getOfferByApplication // Calls the controller to retrieve the offer
+);
 
 // Get all gigs (any logged-in user) OR create a gig (only provider)
 router.get(

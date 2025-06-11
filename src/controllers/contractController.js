@@ -7,6 +7,7 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import Applicance from "../models/Applicance.js";
+import { Offer } from "../models/Offer.js";
 
 export const getMyContracts = catchAsync(async (req, res, next) => {
   const userId = req.user._id; // Get the logged-in user's ID
@@ -386,16 +387,21 @@ export const cancelContract = catchAsync(async (req, res, next) => {
     // Optionally: return next(new AppError('Cannot cancel directly, payment exists. Use refund process.', 400));
   }
 
+  // Delete all related offers for the gig associated with the contract
+  const gigId = contract.gig;
+  await Offer.deleteMany({ gig: gigId });
+
   contract.status = "cancelled";
   if (reason) contract.cancellationReason = reason.trim();
   contract.cancelledAt = Date.now();
   await contract.save();
 
   console.log(`Contract ${contract._id} cancelled by User ${userId}`);
+  console.log(`All related offers for gig ${gigId} have been deleted.`);
 
   res.status(200).json({
     status: "success",
-    message: "Contract cancelled successfully.",
+    message: "Contract cancelled successfully. All related offers deleted.",
     data: {
       contract,
     },
