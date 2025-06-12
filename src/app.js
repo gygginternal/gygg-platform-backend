@@ -20,6 +20,7 @@ import paymentRouter from "./routes/paymentRoutes.js";
 import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicanceRoutes from "./routes/applicanceRoutes.js"; // Import the applicance routes
+import offerRoutes from "./routes/offerRoutes.js"; // Import offer routes
 
 // Stripe Webhook Handler
 import { stripeWebhookHandler } from "./controllers/paymentController.js";
@@ -91,6 +92,7 @@ app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/payments", paymentRouter); // Non-webhook routes
 app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
+app.use("/api/v1/offers", offerRoutes); // Use offer routes
 logger.info("✅ All routes successfully mounted");
 
 app.get("/favicon.ico", (req, res) => res.status(204).end());

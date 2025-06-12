@@ -5,6 +5,22 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
+import AWS from "aws-sdk";
+import multer from "multer";
+import { v4 as uuidv4 } from "uuid"; // For generating unique filenames
+
+// Configure AWS S3
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID, // Replace with your AWS access key
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, // Replace with your AWS secret key
+  region: process.env.AWS_REGION, // Replace with your AWS region
+});
+
+// Configure multer for file upload
+const upload = multer({
+  storage: multer.memoryStorage(), // Store files in memory for direct upload to S3
+  limits: { fileSize: 5 * 1024 * 1024 }, // Limit file size to 5MB
+});
 
 // Utility function to check if the user is the owner of the post or has admin privileges
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
@@ -116,39 +132,46 @@ export const getPost = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: "success", data: { post } }); // Return post data
 });
 
-// Route handler to create a new post
+// Route handler to create a new post with image upload
 export const createPost = catchAsync(async (req, res, next) => {
-  const { content, media, tags, location } = req.body;
+  const { content } = req.body; // Extract content from form data
 
-  // Validate location if provided
-  let locationData;
-  if (
-    location &&
-    location.coordinates &&
-    Array.isArray(location.coordinates) &&
-    location.coordinates.length === 2
-  ) {
-    locationData = {
-      type: "Point",
-      coordinates: [
-        parseFloat(location.coordinates[0]),
-        parseFloat(location.coordinates[1]),
-      ], // Ensure correct coordinate order
-      address: location.address, // Optional address
+  // Validate content
+  if (!content || content.trim() === "") {
+    return next(new AppError("Content cannot be empty.", 400));
+  }
+
+  // Handle image upload to S3
+  let mediaUrl = null;
+  if (req.file) {
+    const fileName = `posts/${uuidv4()}-${req.file.originalname}`;
+    const params = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME, // Replace with your S3 bucket name
+      Key: fileName,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
     };
+
+    try {
+      const uploadResult = await s3.upload(params).promise();
+      mediaUrl = uploadResult.Location; // Get the uploaded file's URL
+    } catch (error) {
+      return next(new AppError("Failed to upload image to S3.", 500));
+    }
   }
 
   // Create a new post with the provided data
   const newPost = await Post.create({
     author: req.user.id,
-    content,
-    media,
-    tags,
-    location: locationData,
+    content: content.trim(),
+    media: mediaUrl, // Save the uploaded image URL
   });
 
   // Return the created post data
-  res.status(201).json({ status: "success", data: { post: newPost } });
+  res.status(201).json({
+    status: "success",
+    data: { post: newPost },
+  });
 });
 
 // Route handler to update an existing post
@@ -286,7 +309,9 @@ export const unlikePost = catchAsync(async (req, res, next) => {
 
   // Remove the user's ID from the likes array and decrement the likeCount
   post.likes = post.likes.filter((id) => id.toString() !== userId);
-  post.likeCount -= 1;
+  if (post.likeCount > 0) {
+    post.likeCount -= 1;
+  }
 
   // Save the updated post
   await post.save();

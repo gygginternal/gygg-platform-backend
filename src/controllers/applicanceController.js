@@ -4,6 +4,63 @@ import Contract from "../models/Contract.js";
 import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/AppError.js";
 import app from "../app.js";
+import { Offer } from "../models/Offer.js"; // Import the Offer model
+
+/**
+ * Controller to create an offer for an application.
+ * @param {object} req - The request object.
+ * @param {object} res - The response object.
+ * @param {function} next - The next middleware function.
+ */
+export const createOffer = catchAsync(async (req, res, next) => {
+  const { applicationId } = req.params; // Extract application ID from route parameters
+
+  // Validate that the application exists
+  const application = await Applicance.findById(applicationId).populate("gig");
+  if (!application) {
+    return next(new AppError("Application not found.", 404));
+  }
+
+  // Ensure the logged-in user is the provider who posted the gig
+  const gig = application.gig;
+
+  if (gig.postedBy._id.toString() !== req.user.id) {
+    return next(
+      new AppError(
+        "You are not authorized to create an offer for this application.",
+        403
+      )
+    );
+  }
+
+  // Check if an offer already exists for this application
+  const existingOffer = await Offer.findOne({ application: applicationId });
+  if (existingOffer) {
+    return next(
+      new AppError(
+        "An offer has already been created for this application.",
+        400
+      )
+    );
+  }
+
+  // Create the offer
+  const offer = await Offer.create({
+    application: applicationId,
+    gig: gig._id, // Save the gig ID
+    provider: req.user.id,
+    tasker: application.user,
+    status: "pending",
+  });
+
+  res.status(201).json({
+    status: "success",
+    message: "Offer created successfully.",
+    data: {
+      offer,
+    },
+  });
+});
 
 export const listGigApplications = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
@@ -38,8 +95,6 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
 });
 
 export const applyToGig = catchAsync(async (req, res, next) => {
-  console.log("ok");
-
   const { gigId } = req.params;
   const user = req.user._id; // Logged-in tasker
 
