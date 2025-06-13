@@ -57,11 +57,6 @@ router.post('/login', loginValidation, validateRequest, login);
 
 router.get('/verifyEmail/:token', verifyEmail); // Token validated by controller
 
-// Route to view *another* user's public album
-router.get('/users/:userId/album', [ // Changed path for clarity
-    param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
-], validateRequest, getUserAlbum);
-
 // --- Forgot/Reset Password Routes ---
 // router.post('/forgotPassword', [
 //     body('email').isEmail().withMessage('Please provide a valid email.').normalizeEmail(),
@@ -146,6 +141,11 @@ router.route('/me/album')
 router.delete('/me/album/:photoId', [
     param('photoId').isMongoId().withMessage('Invalid photo ID format'),
 ], validateRequest, deleteAlbumPhoto);
+
+// Route to view *another* user's public album
+router.get('/users/:userId/album', [ // Changed path for clarity
+    param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
+], validateRequest, getUserAlbum);
 
 /**
  * ===============================
