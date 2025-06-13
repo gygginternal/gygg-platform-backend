@@ -1,8 +1,7 @@
-// src/routes/userRoutes.js
 import express from 'express';
 import { body, param, query } from 'express-validator';
 import validateRequest from '../middleware/validateRequest.js';
-import { parseJsonFields } from '../middleware/parseFormData.js'; // <<< IMPORT PARSER
+import { parseJsonFields } from '../middleware/parseFormData.js'; // <<< IMPORT PARSER (assuming this middleware exists)
 
 // --- AUTH CONTROLLER FUNCTIONS ---
 import {
@@ -26,7 +25,7 @@ import {
 } from '../controllers/paymentController.js';
 
 // --- S3 UPLOAD MIDDLEWARE ---
-import { uploadS3 } from '../config/s3Config.js';
+import { uploadS3 } from '../config/s3Config.js'; // Assuming this exists and is configured
 
 const router = express.Router();
 
@@ -44,8 +43,14 @@ const signupValidation = [
         .custom((value, { req }) => { if (value !== req.body.password) throw new Error('Passwords do not match'); return true; }),
     body('role').optional().isArray().withMessage('Role must be an array'),
     body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
-    body('phoneNo').optional({ checkFalsy: true }).isMobilePhone('any', { strictMode: false }).withMessage('Invalid phone number format'),
-    body('dateOfBirth').optional({ checkFalsy: true }).isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
+    
+    // *** PHONE NUMBER VALIDATION - CHANGED strictMode TO TRUE ***
+    body('phoneNo')
+      .notEmpty().withMessage('Phone number is required') // Made notEmpty required
+      .isMobilePhone('any', { strictMode: true }) // <--- CHANGED THIS TO TRUE
+      .withMessage('Invalid phone number format. Must include country code (e.g., +12345678900).'),
+
+    body('dateOfBirth').notEmpty().withMessage('Date of Birth is required').isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
 ];
 router.post('/signup', signupValidation, validateRequest, signup);
 
@@ -92,7 +97,12 @@ const updateMeValidation = [
     // Text fields
     body('firstName').optional().trim().escape(),
     body('lastName').optional().trim().escape(),
-    body('phoneNo').optional({ checkFalsy: true }).isMobilePhone('any', { strictMode: false }).withMessage('Invalid phone number'),
+    // *** PHONE NUMBER VALIDATION - CHANGED strictMode TO TRUE ***
+    body('phoneNo')
+      .optional({ checkFalsy: true }) // Optional for update
+      .isMobilePhone('any', { strictMode: true }) // <--- CHANGED THIS TO TRUE
+      .withMessage('Invalid phone number format. Must include country code (e.g., +12345678900).'),
+      
     body('bio').optional().trim().escape().isLength({ max: 750 }).withMessage('Bio cannot exceed 750 characters'),
     // Arrays (controller handles string to array conversion if needed from FormData)
     body('hobbies').optional(),
