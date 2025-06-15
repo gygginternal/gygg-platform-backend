@@ -90,4 +90,15 @@ router.get(
   checkIfContractIsReleasable // Calls the controller to check releasability
 );
 
+// Route to release a payment for a specific contract (escrow release)
+router.post(
+  "/contracts/:contractId/release-payment",
+  [
+    restrictTo("provider"), // Only the provider can release the payment
+    param("contractId").isMongoId().withMessage("Invalid Contract ID format"),
+  ],
+  validateRequest,
+  releasePaymentForContract
+);
+
 export default router;

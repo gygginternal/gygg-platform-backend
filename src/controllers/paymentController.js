@@ -165,40 +165,64 @@ export const getPaymentIntentForContract = catchAsync(
 
 export const releasePaymentForContract = catchAsync(async (req, res, next) => {
   const { contractId } = req.params;
+  const providerId = req.user.id;
 
-  // Find the payment associated with the contract
+  // Validate contract ID
+  if (!mongoose.Types.ObjectId.isValid(contractId))
+    return next(new AppError("Invalid Contract ID format.", 400));
+
+  // Find the contract and payment
+  const contract = await Contract.findById(contractId);
+  if (!contract) return next(new AppError("Contract not found.", 404));
+
+  // Verify the provider is authorized to release the payment
+  if (contract.provider._id.toString() !== providerId)
+    return next(new AppError("Not authorized to release this payment.", 403));
+
+  // Find the payment record
   const payment = await Payment.findOne({ contract: contractId });
+  if (!payment) return next(new AppError("Payment not found.", 404));
 
-  if (!payment) {
+  // Verify the payment is in a state that can be released
+  if (payment.status !== "requires_capture")
     return next(
-      new AppError("Payment not found for the specified contract.", 404)
+      new AppError(
+        `Payment cannot be released in current status: ${payment.status}`,
+        400
+      )
+    );
+
+  try {
+    // Capture the payment intent
+    const paymentIntent = await stripe.paymentIntents.capture(
+      payment.stripePaymentIntentId
+    );
+
+    // Update payment status
+    payment.status = "succeeded";
+    payment.succeededAt = new Date();
+    await payment.save();
+
+    // Update contract status if needed
+    if (contract.status === "active") {
+      contract.status = "completed";
+      await contract.save();
+    }
+
+    res.status(200).json({
+      status: "success",
+      message: "Payment released successfully",
+      paymentIntent,
+    });
+  } catch (error) {
+    console.error("Error releasing payment:", error);
+    return next(
+      new AppError(
+        `Failed to release payment: ${error.message}`,
+        error.statusCode || 500
+      )
     );
   }
-
-  // Update the payment status to "succeeded"
-  payment.status = "succeeded";
-  payment.succeededAt = Date.now();
-  await payment.save();
-
-  // Find the related contract and mark it as "completed"
-  const contract = await Contract.findById(contractId);
-
-  if (!contract) {
-    return next(new AppError("Contract not found.", 404));
-  }
-
-  contract.status = "completed";
-  contract.completedAt = Date.now();
-  await contract.save();
-
-  res.status(200).json({
-    status: "success",
-    message: "Payment successfully released and contract marked as completed.",
-    data: {
-      payment,
-      contract,
-    },
-  });
 });
 
 // --- Create Payment Intent for Contract (Provider -> Tasker via Platform) ---
@@ -217,7 +241,6 @@ export const createPaymentIntentForContract = catchAsync(
     if (!contract) return next(new AppError("Contract not found.", 404));
 
     // Check if the provider is authorized to make the payment
-
     if (contract.provider._id.toString() !== providerId)
       return next(
         new AppError("Not authorized to pay for this contract.", 403)
@@ -236,17 +259,9 @@ export const createPaymentIntentForContract = catchAsync(
       );
     }
 
-    // Ensure that the tasker has connected a valid Stripe account and has enabled payouts
-
+    // Ensure that the tasker has connected a valid Stripe account
     if (!contract.tasker?.stripeAccountId)
       return next(new AppError("Tasker has not connected Stripe.", 400));
-    // if (!contract.tasker?.stripePayoutsEnabled)
-    //   return next(
-    //     new AppError(
-    //       "Tasker Stripe onboarding incomplete or payouts disabled.",
-    //       400
-    //     )
-    //   );
 
     const taskerStripeAccountId = contract.tasker.stripeAccountId;
     const amountInCents = Math.round(contract.agreedCost * 100); // Total amount provider pays
@@ -268,7 +283,6 @@ export const createPaymentIntentForContract = catchAsync(
       console.error(
         `Calculated fee (${applicationFeeAmount}) exceeds or equals total amount (${amountInCents}) for Contract ${contractId}.`
       );
-      // Decide how to handle: error out, or maybe cap fee at amount - 1 cent?
       return next(
         new AppError(
           "Platform fee calculation error. Please contact support.",
@@ -317,7 +331,7 @@ export const createPaymentIntentForContract = catchAsync(
       amount: amountInCents,
       currency: payment.currency,
       automatic_payment_methods: { enabled: true },
-      capture_method: "automatic",
+      capture_method: "manual", // Changed to manual for escrow
       application_fee_amount: payment.applicationFeeAmount,
       transfer_data: { destination: taskerStripeAccountId },
       metadata: {
@@ -473,10 +487,9 @@ export const stripeWebhookHandler = async (req, res) => {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   let event;
 
-  // Verify the webhook signature
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    console.log("receiving webhook event", JSON.stringify(event, null, 2)); // Log the event for debugging
+    console.log("receiving webhook event", JSON.stringify(event, null, 2));
   } catch (err) {
     console.error(`❌ Webhook signature verification failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -484,21 +497,83 @@ export const stripeWebhookHandler = async (req, res) => {
 
   const dataObject = event.data.object;
 
-  // Handle different event types from Stripe
   switch (event.type) {
-    case "charge.refunded": // Handle payout.paid event
+    case "payment_intent.succeeded":
+      await handlePaymentIntentSucceeded(dataObject);
+      break;
+    case "payment_intent.canceled":
+      await handlePaymentIntentCanceled(dataObject);
+      break;
+    case "charge.refunded":
       await handleChargeRefunded(dataObject);
       break;
-    case "payout.paid": // Handle payout.paid event
+    case "payout.paid":
       await handlePayoutPaid(dataObject);
       break;
     default:
-      // Log and ignore unhandled events
       break;
   }
 
-  // Respond to Stripe to confirm receipt of the webhook
   res.status(200).json({ received: true });
+};
+
+// Add new handler for payment_intent.succeeded
+const handlePaymentIntentSucceeded = async (paymentIntent) => {
+  try {
+    const payment = await Payment.findOne({
+      stripePaymentIntentId: paymentIntent.id,
+    });
+
+    if (!payment) {
+      console.error(`❌ Payment not found for PaymentIntent: ${paymentIntent.id}`);
+      return;
+    }
+
+    // Update payment status
+    payment.status = "succeeded";
+    payment.succeededAt = new Date();
+    await payment.save();
+
+    // Update contract status
+    const contract = await Contract.findById(payment.contract);
+    if (contract) {
+      contract.status = "completed";
+      await contract.save();
+    }
+
+    console.log(`✅ Payment succeeded for PaymentIntent: ${paymentIntent.id}`);
+  } catch (error) {
+    console.error(`❌ Error handling payment_intent.succeeded: ${error.message}`);
+  }
+};
+
+// Add new handler for payment_intent.canceled
+const handlePaymentIntentCanceled = async (paymentIntent) => {
+  try {
+    const payment = await Payment.findOne({
+      stripePaymentIntentId: paymentIntent.id,
+    });
+
+    if (!payment) {
+      console.error(`❌ Payment not found for PaymentIntent: ${paymentIntent.id}`);
+      return;
+    }
+
+    // Update payment status
+    payment.status = "canceled";
+    await payment.save();
+
+    // Update contract status
+    const contract = await Contract.findById(payment.contract);
+    if (contract) {
+      contract.status = "cancelled";
+      await contract.save();
+    }
+
+    console.log(`✅ Payment canceled for PaymentIntent: ${paymentIntent.id}`);
+  } catch (error) {
+    console.error(`❌ Error handling payment_intent.canceled: ${error.message}`);
+  }
 };
 
 // --- Initiate Refund for Contract ---
