@@ -4,6 +4,12 @@ import Contract from "../models/Contract.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 
+let chatWebsocket;
+
+export const setChatWebsocket = (websocket) => {
+  chatWebsocket = websocket;
+};
+
 /**
  * Helper function to verify if the user is part of the contract.
  * @param {string} contractId - The ID of the contract.
@@ -12,6 +18,8 @@ import catchAsync from "../utils/catchAsync.js";
  * @throws {AppError} - Throws an error if the contract ID is invalid, contract not found, or the user is not authorized.
  */
 const verifyContractParty = async (contractId, userId) => {
+  if (!contractId) return null; // Allow direct messaging without contract
+
   // Validate the contract ID format
   if (!mongoose.Types.ObjectId.isValid(contractId)) {
     throw new AppError("Invalid Contract ID format.", 400);
@@ -50,41 +58,64 @@ const verifyContractParty = async (contractId, userId) => {
 };
 
 /**
- * Controller to send a message for a specific contract.
+ * Controller to send a message.
  * @param {object} req - The request object.
  * @param {object} res - The response object.
  * @param {function} next - The next middleware function.
  */
 export const sendMessage = catchAsync(async (req, res, next) => {
-  const { contractId } = req.params; // Extract contract ID from the route parameter
-  const { message } = req.body; // Extract the message content from the request body
-  console.log({ message });
+  const { contractId } = req.params;
+  const { message, type = 'text', attachment } = req.body;
 
   // Validate that the message is not empty
   if (!message || message.trim() === "") {
     return next(new AppError("Message content cannot be empty.", 400));
   }
 
-  // Verify that the user is authorized to send a message for the given contract
+  // Verify that the user is authorized to send a message for the given contract (if provided)
   const contract = await verifyContractParty(contractId, req.user.id);
 
-  // Determine the receiver ID (the other party in the contract)
-  const receiverId =
-    contract.provider._id.toString() === req.user.id
-      ? contract.tasker._id // If the user is the provider, send the message to the tasker
-      : contract.provider._id; // Otherwise, send it to the provider
+  // Determine the receiver ID
+  let receiverId;
+  if (contract) {
+    // If there's a contract, determine receiver based on contract parties
+    receiverId =
+      contract.provider._id.toString() === req.user.id
+        ? contract.tasker._id
+        : contract.provider._id;
+  } else {
+    // For direct messaging, receiver ID should be provided in the request
+    receiverId = req.body.receiverId;
+    if (!receiverId) {
+      return next(new AppError("Receiver ID is required for direct messaging.", 400));
+    }
+  }
 
   // Create and save the new chat message
-
   const newMessage = await ChatMessage.create({
-    contract: contractId,
+    contract: contractId || null,
     sender: req.user.id,
     receiver: receiverId,
-    content: message.trim(), // Map the message to the 'content' field
+    content: message.trim(),
+    type,
+    attachment: attachment || undefined
   });
 
   // Fetch the populated message (to include sender details)
   const populatedMessage = await ChatMessage.findById(newMessage._id);
+
+  // Emit socket.io events for real-time updates
+  if (chatWebsocket) {
+    // Notify receiver of new message
+    chatWebsocket.emitNewMessage(receiverId, populatedMessage);
+
+    // Update unread count for receiver
+    const unreadCount = await ChatMessage.countDocuments({
+      receiver: receiverId,
+      readStatus: false,
+    });
+    chatWebsocket.emitUnreadCountUpdate(receiverId, unreadCount);
+  }
 
   // Respond with the newly created message
   res.status(201).json({
@@ -94,33 +125,57 @@ export const sendMessage = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Controller to get the chat history for a contract.
+ * Controller to get the chat history.
  * @param {object} req - The request object.
  * @param {object} res - The response object.
  * @param {function} next - The next middleware function.
  */
 export const getChatHistory = catchAsync(async (req, res, next) => {
-  const { contractId } = req.params; // Extract contract ID from the route parameter
+  const { contractId } = req.params;
+  const { userId } = req.query;
 
   // Verify that the user is authorized to view the chat history
-  await verifyContractParty(contractId, req.user.id);
+  if (contractId) {
+    await verifyContractParty(contractId, req.user.id);
+  } else if (!userId) {
+    return next(new AppError("Either contractId or userId is required.", 400));
+  }
 
   // Set pagination parameters (default to page 1 with 50 messages per page)
   const page = req.query.page * 1 || 1;
   const limit = req.query.limit * 1 || 50;
   const skip = (page - 1) * limit;
 
-  // Fetch chat messages for the contract, sorted by timestamp (ascending)
-  const messages = await ChatMessage.find({ contract: contractId })
+  // Build query based on whether it's a contract chat or direct message
+  const query = contractId
+    ? { contract: contractId }
+    : {
+        $or: [
+          { sender: req.user.id, receiver: userId },
+          { sender: userId, receiver: req.user.id }
+        ]
+      };
+
+  // Fetch chat messages, sorted by timestamp (ascending)
+  const messages = await ChatMessage.find(query)
     .sort({ timestamp: 1 })
     .skip(skip)
     .limit(limit);
 
-  // Mark messages as read if the user is the receiver (update their read status)
-  await ChatMessage.updateMany(
-    { contract: contractId, receiver: req.user.id, readStatus: false },
+  // Mark messages as read if the user is the receiver
+  const updateResult = await ChatMessage.updateMany(
+    { receiver: req.user.id, readStatus: false },
     { $set: { readStatus: true } }
   );
+
+  // If messages were marked as read, update unread count
+  if (updateResult.modifiedCount > 0 && chatWebsocket) {
+    const unreadCount = await ChatMessage.countDocuments({
+      receiver: req.user.id,
+      readStatus: false,
+    });
+    chatWebsocket.emitUnreadCountUpdate(req.user.id, unreadCount);
+  }
 
   // Respond with the list of messages
   res.status(200).json({
@@ -137,46 +192,102 @@ export const getChatHistory = catchAsync(async (req, res, next) => {
  * @param {function} next - The next middleware function.
  */
 export const getConversations = catchAsync(async (req, res, next) => {
-  const userId = req.user.id; // Get the user ID from the request object
+  const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  // Find contracts where the user is either the provider or tasker
-  const contracts = await Contract.find({
-    $or: [{ provider: userId }, { tasker: userId }],
-  })
-    .populate({ path: "provider", select: "firstName lastName profileImage" })
-    .populate({ path: "tasker", select: "firstName lastName profileImage" })
-    .populate("gig", "title status") // Populate gig details
-    .sort({ updatedAt: -1 }); // Sort by last update (latest first)
-
-  // Map contracts to conversations (show the other party and relevant contract details)
-  const conversations = contracts.map((contract) => {
-    const otherParty =
-      contract.provider._id.toString() !== userId
-        ? contract.provider // The other party is the provider
-        : contract.tasker; // The other party is the tasker
-
-    return {
-      contractId: contract._id,
-      gigTitle: contract.gig?.title, // Gig title
-      gigStatus: contract.gig?.status, // Gig status
-      contractStatus: contract.status, // Contract status
-      otherParty: otherParty
-        ? {
-            // Details of the other party
-            id: otherParty._id,
-            firstName: otherParty.firstName,
-            lastName: otherParty.lastName,
-            profileImage: otherParty.profileImage,
+  // Get all unique users the current user has chatted with
+  const conversations = await ChatMessage.aggregate([
+    {
+      $match: {
+        $or: [
+          { sender: userId },
+          { receiver: userId }
+        ]
+      }
+    },
+    {
+      $sort: { timestamp: -1 }
+    },
+    {
+      $group: {
+        _id: {
+          $cond: [
+            { $eq: ["$sender", userId] },
+            "$receiver",
+            "$sender"
+          ]
+        },
+        lastMessage: { $first: "$$ROOT" },
+        unreadCount: {
+          $sum: {
+            $cond: [
+              { $and: [
+                { $eq: ["$receiver", userId] },
+                { $eq: ["$readStatus", false] }
+              ]},
+              1,
+              0
+            ]
           }
-        : null,
-      lastUpdatedAt: contract.updatedAt, // Last updated timestamp
-    };
-  });
+        }
+      }
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "_id",
+        foreignField: "_id",
+        as: "otherParty"
+      }
+    },
+    {
+      $unwind: "$otherParty"
+    },
+    {
+      $project: {
+        _id: 1,
+        otherParty: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          profileImage: 1
+        },
+        lastMessage: {
+          content: 1,
+          timestamp: 1,
+          type: 1,
+          attachment: 1
+        },
+        unreadCount: 1
+      }
+    }
+  ]);
 
-  // Respond with the list of conversations
   res.status(200).json({
     status: "success",
     results: conversations.length,
-    data: { conversations },
+    data: { conversations }
+  });
+});
+
+/**
+ * Controller to get the count of unread messages for the logged-in user.
+ * @param {object} req - The request object.
+ * @param {object} res - The response object.
+ * @param {function} next - The next middleware function.
+ */
+export const getUnreadMessageCount = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  // Find messages where the current user is the receiver and the message is unread
+  const unreadCount = await ChatMessage.countDocuments({
+    receiver: userId,
+    readStatus: false,
+  });
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      unreadCount,
+    },
   });
 });

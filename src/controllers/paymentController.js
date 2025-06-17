@@ -209,6 +209,12 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
       await contract.save();
     }
 
+    // Update contract with payment breakdown
+    contract.taxAmount = payment.taxAmount;
+    contract.platformFeeAmount = payment.applicationFeeAmount;
+    contract.payoutToTasker = payment.amountReceivedByPayee;
+    await contract.save();
+
     res.status(200).json({
       status: "success",
       message: "Payment released successfully",
@@ -268,20 +274,21 @@ export const createPaymentIntentForContract = catchAsync(
     if (amountInCents <= 0)
       return next(new AppError("Invalid contract cost.", 400));
 
+    // Calculate tax (from environment variable, default 13%)
+    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
+    const taxAmount = Math.round(amountInCents * taxPercent);
+    const amountAfterTax = amountInCents - taxAmount;
+
     // Calculate the application fee based on the platform's percentage and fixed fee
     const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
     const fixedFeeCents = 500; // Define the fixed fee ($5.00) in cents
-
-    // Calculate percentage part
-    const percentageFee = Math.round(amountInCents * (feePercentage / 100));
-
-    // Calculate total application fee
+    const percentageFee = Math.round(amountAfterTax * (feePercentage / 100));
     const applicationFeeAmount = percentageFee + fixedFeeCents;
 
-    // Optional: Sanity check - ensure fee doesn't exceed total amount
-    if (applicationFeeAmount >= amountInCents) {
+    // Optional: Sanity check - ensure fee doesn't exceed total after-tax amount
+    if (applicationFeeAmount >= amountAfterTax) {
       console.error(
-        `Calculated fee (${applicationFeeAmount}) exceeds or equals total amount (${amountInCents}) for Contract ${contractId}.`
+        `Calculated fee (${applicationFeeAmount}) exceeds or equals total after-tax amount (${amountAfterTax}) for Contract ${contractId}.`
       );
       return next(
         new AppError(
@@ -307,7 +314,9 @@ export const createPaymentIntentForContract = catchAsync(
         status: "requires_payment_method",
         stripeConnectedAccountId: taskerStripeAccountId,
         applicationFeeAmount: applicationFeeAmount,
-        amountReceivedByPayee: amountInCents - applicationFeeAmount,
+        amountReceivedByPayee: amountAfterTax - applicationFeeAmount,
+        taxAmount: taxAmount,
+        amountAfterTax: amountAfterTax,
       });
     } else if (
       !["requires_payment_method", "failed"].includes(payment.status)
@@ -322,6 +331,9 @@ export const createPaymentIntentForContract = catchAsync(
       payment.currency = paymentCurrency;
       payment.stripeConnectedAccountId = taskerStripeAccountId;
       payment.applicationFeeAmount = applicationFeeAmount;
+      payment.amountReceivedByPayee = amountAfterTax - applicationFeeAmount;
+      payment.taxAmount = taxAmount;
+      payment.amountAfterTax = amountAfterTax;
       payment.status = "requires_payment_method";
       await payment.save();
     }
@@ -339,6 +351,8 @@ export const createPaymentIntentForContract = catchAsync(
         contractId: contractId.toString(),
         providerId: providerId.toString(),
         taskerId: contract.tasker._id.toString(),
+        taxAmount: taxAmount,
+        amountAfterTax: amountAfterTax,
       },
     };
 
@@ -380,6 +394,12 @@ export const createPaymentIntentForContract = catchAsync(
     // Save payment with the payment intent ID
     payment.status = "requires_payment_method";
     await payment.save();
+
+    // Update contract with payment breakdown
+    contract.taxAmount = payment.taxAmount;
+    contract.platformFeeAmount = payment.applicationFeeAmount;
+    contract.payoutToTasker = payment.amountReceivedByPayee;
+    await contract.save();
 
     // Respond with the client secret to complete the payment
     res.status(200).json({

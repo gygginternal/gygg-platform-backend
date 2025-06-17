@@ -8,7 +8,8 @@ import app from "./app.js"; // Main Express app
 import connectDB from "./config/db.js"; // MongoDB connection logic
 import logger from "./utils/logger.js"; // Custom logger (e.g., using Winston or Pino)
 import http from "http"; // Needed to create an HTTP server for WebSocket integration
-import { initializeChatWebSocket } from "./controllers/chatWebsocket.js"; // Import chat WebSocket logic
+import { initializeChatWebsocket } from "./controllers/chatWebsocket.js"; // Import chat WebSocket logic
+import { setChatWebsocket } from './controllers/chatController.js';
 
 // --- Handle Uncaught Synchronous Exceptions ---
 process.on("uncaughtException", (err) => {
@@ -28,7 +29,8 @@ const port = process.env.PORT || 3000;
 const server = http.createServer(app); // Use the Express app to create an HTTP server
 
 // --- Initialize Chat WebSocket Server ---
-initializeChatWebSocket(server); // Pass the HTTP server to the WebSocket initializer
+const chatWebsocket = initializeChatWebsocket(server);
+setChatWebsocket(chatWebsocket);
 
 // --- Start HTTP Server ---
 server.listen(port, () => {

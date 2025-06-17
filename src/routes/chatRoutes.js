@@ -5,8 +5,9 @@ import {
     sendMessage,         // Function to send a message in a chat
     getChatHistory,      // Function to get the chat history for a contract
     getConversations,    // Function to get all conversations for the logged-in user
+    getUnreadMessageCount,
 } from '../controllers/chatController.js';
-import { protect } from '../controllers/authController.js';  // Middleware to protect routes that require authentication
+import { protect } from "../controllers/authController.js";
 
 const router = express.Router();
 
@@ -25,6 +26,9 @@ router.use(protect); // Protect all routes below this middleware (user must be l
 // Route to get all conversations for the logged-in user (accessible only by logged-in users)
 router.get('/conversations', getConversations); // Get all conversations
 
+// Route to get the count of unread messages for the logged-in user
+router.get('/unread-count', getUnreadMessageCount);
+
 
 /**
  * --- Contract-Specific Message Routes ---
@@ -32,17 +36,10 @@ router.get('/conversations', getConversations); // Get all conversations
  * Permissions for these actions are handled by the 'protect' middleware, ensuring only authenticated users can send or view messages.
  */
 
-// Route to send a message or get the chat history for a specific contract.
-// The 'contractId' parameter specifies which contract's messages should be retrieved or sent to.
-router.route('/contracts/:contractId/messages')
-    .post([ // Validate sending a message
-        param('contractId').isMongoId().withMessage('Invalid Contract ID format'),
-        body('message').notEmpty().withMessage('Message content cannot be empty').trim().escape().isLength({ max: 2000 }), // Ensure message exists and is reasonable length
-    ], validateRequest, sendMessage) // Validate the request before sending the message
-    .get([ // Validate getting chat history
-        param('contractId').isMongoId().withMessage('Invalid Contract ID format'),
-        query('page').optional().isInt({ min: 1 }).toInt(),
-        query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
-    ], validateRequest, getChatHistory); // Validate the request before retrieving chat history
+// Route to get chat history for a specific contract or user
+router.get('/history/:contractId?', getChatHistory);
+
+// Route to send a message (with or without a contract)
+router.post('/send/:contractId?', sendMessage);
 
 export default router;

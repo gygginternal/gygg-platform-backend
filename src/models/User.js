@@ -71,13 +71,11 @@ const userSchema = new mongoose.Schema(
       sparse: true, // Optional: if unique, allows multiple null/undefined values
       validate: {
         validator: function(v) {
-          // Allow null or empty strings to pass (if field is not strictly required)
-          // Backend routes should validate if it's required for a specific operation.
           if (!v) return true;
-          // validator.isMobilePhone(v, 'any') checks various locales but expects full number with country code
-          return validator.isMobilePhone(v, 'any', { strictMode: false });
+          // E.164 format: + followed by 8 to 15 digits
+          return /^\+\d{8,15}$/.test(v);
         },
-        message: props => `${props.value} is not a valid international phone number format (e.g., +14165551234).`
+        message: props => `${props.value} is not a valid international phone number format (E.164, e.g., +14165551234, +919876543210, +441234567890).`
       }
     },
 

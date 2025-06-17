@@ -58,12 +58,13 @@ router.patch(
 
 // --- Route: Get Top Matching Appliances ---
 // @route   GET /api/v1/applicances/top-match
-// @desc    Get the top 3 matching appliances for the logged-in user
+// @desc    Get the top matching applications for the logged-in user
 // @access  Private (only accessible to users)
 router.get(
   "/top-match",
-  restrictTo("provider", "tasker"), // Accessible to providers and taskers
-  topMatchApplicances // Calls the controller to handle the request
+  protect,
+  restrictTo("provider", "tasker"),
+  topMatchApplicances
 );
 
 export default router;

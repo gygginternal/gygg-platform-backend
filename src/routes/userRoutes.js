@@ -15,7 +15,9 @@ import {
   getMe, updateMe, deleteMe,
   getAllUsers, getUser, updateUser, deleteUser,
   matchTaskers,
-  uploadAlbumPhoto, getUserAlbum, deleteAlbumPhoto
+  uploadAlbumPhoto, getUserAlbum, deleteAlbumPhoto,
+  topMatchTaskersForProvider,
+  getPublicProfile
 } from '../controllers/userController.js';
 
 // --- PAYMENT CONTROLLER FUNCTIONS (for Stripe Onboarding) ---
@@ -28,6 +30,13 @@ import {
 import { uploadS3 } from '../config/s3Config.js'; // Assuming this exists and is configured
 
 const router = express.Router();
+
+// --- PUBLIC PROFILE ROUTE (must be before any /:id or similar catch-all routes) ---
+router.get('/public/:userId', [
+  protect,
+  param('userId').isMongoId().withMessage('Invalid user ID format'),
+  validateRequest,
+], getPublicProfile);
 
 /**
  * ===============================
@@ -44,11 +53,11 @@ const signupValidation = [
     body('role').optional().isArray().withMessage('Role must be an array'),
     body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
     
-    // *** PHONE NUMBER VALIDATION - CHANGED strictMode TO TRUE ***
+    // *** PHONE NUMBER VALIDATION - E.164 international format ***
     body('phoneNo')
-      .notEmpty().withMessage('Phone number is required') // Made notEmpty required
-      .isMobilePhone('any', { strictMode: true }) // <--- CHANGED THIS TO TRUE
-      .withMessage('Invalid phone number format. Must include country code (e.g., +12345678900).'),
+      .notEmpty().withMessage('Phone number is required')
+      .matches(/^\+\d{8,15}$/)
+      .withMessage('Phone number must be in international E.164 format (e.g., +14165551234, +919876543210, +441234567890).'),
 
     body('dateOfBirth').notEmpty().withMessage('Date of Birth is required').isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
 ];
@@ -97,11 +106,11 @@ const updateMeValidation = [
     // Text fields
     body('firstName').optional().trim().escape(),
     body('lastName').optional().trim().escape(),
-    // *** PHONE NUMBER VALIDATION - CHANGED strictMode TO TRUE ***
+    // *** PHONE NUMBER VALIDATION - E.164 international format ***
     body('phoneNo')
-      .optional({ checkFalsy: true }) // Optional for update
-      .isMobilePhone('any', { strictMode: true }) // <--- CHANGED THIS TO TRUE
-      .withMessage('Invalid phone number format. Must include country code (e.g., +12345678900).'),
+      .optional({ checkFalsy: true })
+      .matches(/^\+\d{8,15}$/)
+      .withMessage('Phone number must be in international E.164 format (e.g., +14165551234, +919876543210, +441234567890).'),
       
     body('bio').optional().trim().escape().isLength({ max: 750 }).withMessage('Bio cannot exceed 750 characters'),
     // Arrays (controller handles string to array conversion if needed from FormData)
@@ -168,6 +177,8 @@ const matchTaskersValidation = [
 ];
 router.get('/match-taskers', restrictTo('provider'), matchTaskersValidation, validateRequest, matchTaskers);
 
+// Provider: Get top matching taskers by hobbies and personality
+router.get('/top-match-taskers', protect, restrictTo('provider'), topMatchTaskersForProvider);
 
 /**
  * ===============================

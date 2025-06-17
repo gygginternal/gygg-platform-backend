@@ -5,6 +5,7 @@ import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/AppError.js";
 import app from "../app.js";
 import { Offer } from "../models/Offer.js"; // Import the Offer model
+import User from "../models/User.js"; // Import the User model
 
 /**
  * Controller to create an offer for an application.
@@ -244,107 +245,38 @@ export const cancelApplicance = catchAsync(async (req, res, next) => {
 export const topMatchApplicances = catchAsync(async (req, res, next) => {
   const user = req.user;
   const userHobbies = user.hobbies || [];
-  const userPreferences = user.peoplePreference || [];
-  const userId = user._id;
+  const userPreferences = Array.isArray(user.peoplePreference)
+    ? user.peoplePreference
+    : (user.peoplePreference ? [user.peoplePreference] : []);
 
-  console.log(
-    `topMatchApplicances: User ${userId} searching for top appliances. Hobbies: [${userHobbies.join(
-      ", "
-    )}], Preferences: [${userPreferences.join(", ")}]`
-  );
+  // Determine if the user is a provider or tasker
+  const isProvider = user.role.includes('provider');
+  const matchRole = isProvider ? 'tasker' : 'provider';
 
-  const pipeline = [];
+  // Find all users of the opposite role
+  const matches = await User.find({ role: matchRole, active: true, _id: { $ne: user._id } });
 
-  // Match appliances associated with gigs
-  pipeline.push({
-    $lookup: {
-      from: "gigs", // MongoDB collection for gigs
-      localField: "gig",
-      foreignField: "_id",
-      as: "gigDetails",
-    },
+  // Calculate match score for each user
+  const scoredMatches = matches.map(match => {
+    const hobbyOverlap = Array.isArray(match.hobbies)
+      ? match.hobbies.filter(h => userHobbies.includes(h)).length
+      : 0;
+    const personalityOverlap = Array.isArray(match.peoplePreference)
+      ? match.peoplePreference.filter(p => userPreferences.includes(p)).length
+      : 0;
+    const matchScore = hobbyOverlap + personalityOverlap;
+    return {
+      ...match.toObject(),
+      matchScore,
+    };
   });
 
-  // Unwind gigDetails array to make it a single object
-  pipeline.push({
-    $unwind: "$gigDetails",
-  });
-
-  // Lookup the user who applied for the appliance
-  pipeline.push({
-    $lookup: {
-      from: "users", // MongoDB collection for users
-      localField: "user",
-      foreignField: "_id",
-      as: "applicant",
-    },
-  });
-
-  // Unwind applicant array to make it a single object
-  pipeline.push({
-    $unwind: "$applicant",
-  });
-
-  // Calculate matchScore based on the overlap between the applicant's attributes and the user's attributes
-  pipeline.push({
-    $addFields: {
-      matchScore: {
-        $add: [
-          {
-            $size: {
-              $setIntersection: [
-                { $ifNull: ["$applicant.hobbies", []] }, // Default to empty array if null
-                userHobbies,
-              ],
-            },
-          }, // Overlap in hobbies
-          {
-            $size: {
-              $setIntersection: [
-                { $ifNull: ["$applicant.peoplePreference", []] }, // Default to empty array if null
-                userPreferences,
-              ],
-            },
-          }, // Overlap in peoplePreference
-        ],
-      },
-    },
-  });
-
-  // Sort by matchScore in descending order
-  pipeline.push({ $sort: { matchScore: -1, createdAt: -1 } });
-
-  // Limit to top 3 appliances
-  pipeline.push({ $limit: 3 });
-
-  // Project fields to match the desired response structure
-  pipeline.push({
-    $project: {
-      id: "$_id", // Use MongoDB's _id as the id
-      description: {
-        $concat: [
-          "$applicant.firstName",
-          ". ",
-          { $substr: ["$applicant.lastName", 0, 1] },
-          " applied for ",
-          "$gigDetails.title",
-        ],
-      },
-      applianceId: "$_id",
-      gigId: "$gigDetails._id", // Include the gig ID
-      matchScore: 1, // Include matchScore in the response
-    },
-  });
-
-  const matchedApplicances = await Applicance.aggregate(pipeline);
-
-  console.log(
-    `topMatchApplicances: Found ${matchedApplicances.length} appliances for user ${userId}.`
-  );
+  // Sort by matchScore descending, then by rating
+  scoredMatches.sort((a, b) => b.matchScore - a.matchScore || (b.rating || 0) - (a.rating || 0));
 
   res.status(200).json({
-    status: "success",
-    results: matchedApplicances.length,
-    data: matchedApplicances,
+    status: 'success',
+    results: scoredMatches.length,
+    data: { matches: scoredMatches },
   });
 });

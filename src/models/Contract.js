@@ -23,6 +23,20 @@ const contractSchema = new mongoose.Schema(
       min: [0, "Agreed cost cannot be negative."],
     },
 
+    // --- Payment breakdown fields (all in cents) ---
+    taxAmount: {
+      type: Number,
+      default: 0,
+    },
+    platformFeeAmount: {
+      type: Number,
+      default: 0,
+    },
+    payoutToTasker: {
+      type: Number,
+      default: 0,
+    },
+
     // Status flow of the contract
     status: {
       type: String,

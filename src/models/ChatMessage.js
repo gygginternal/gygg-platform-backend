@@ -3,11 +3,11 @@ import mongoose from "mongoose";
 // Define schema for chat messages
 const chatMessageSchema = new mongoose.Schema(
   {
-    // The contract to which the message belongs
+    // The contract to which the message belongs (optional for direct messages)
     contract: {
       type: mongoose.Schema.ObjectId, // Refers to a Contract document
       ref: "Contract", // Linked model
-      required: [true, "A message must belong to a contract."], // Ensure contract exists for every message
+      required: false, // Make contract optional
       index: true, // Indexing for faster query retrieval based on contract
     },
 
@@ -32,9 +32,26 @@ const chatMessageSchema = new mongoose.Schema(
       required: [true, "Message content cannot be empty."], // Ensure message is not empty
       trim: true, // Remove leading/trailing spaces
     },
+
+    // Support for rich text content (optional)
     htmlContent: {
       type: String, // Store the message content
       trim: true, // Remove leading/trailing spaces
+    },
+
+    // Message type (text, image, file, etc.)
+    type: {
+      type: String,
+      enum: ['text', 'image', 'file', 'system'],
+      default: 'text'
+    },
+
+    // For file/image messages
+    attachment: {
+      url: String,
+      fileName: String,
+      fileType: String,
+      fileSize: Number
     },
 
     // Indicates whether the message has been read
@@ -49,7 +66,7 @@ const chatMessageSchema = new mongoose.Schema(
       type: Date,
       default: Date.now, // Default to current time when the message is created
       index: true, // Indexing for fast sorting and querying by timestamp
-    },
+    }
   },
   {
     timestamps: { createdAt: "timestamp", updatedAt: false }, // Set createdAt as 'timestamp' and no updatedAt

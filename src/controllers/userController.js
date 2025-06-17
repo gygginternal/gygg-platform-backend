@@ -288,6 +288,65 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
     res.status(200).json({ status: 'success', results: matchedTaskers.length, data: { taskers: matchedTaskers } });
 });
 
+// --- Controller: Top match taskers for provider ---
+export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
+  const provider = req.user;
+  const providerHobbies = provider.hobbies || [];
+  const providerPreferences = Array.isArray(provider.peoplePreference)
+    ? provider.peoplePreference
+    : (provider.peoplePreference ? [provider.peoplePreference] : []);
+
+  // Find all taskers except the current user
+  const taskers = await User.find({ role: 'tasker', active: true, _id: { $ne: provider._id } });
+
+  // Calculate match score for each tasker
+  const scoredTaskers = taskers.map(tasker => {
+    const hobbyOverlap = Array.isArray(tasker.hobbies)
+      ? tasker.hobbies.filter(h => providerHobbies.includes(h)).length
+      : 0;
+    const personalityOverlap = Array.isArray(tasker.peoplePreference)
+      ? tasker.peoplePreference.filter(p => providerPreferences.includes(p)).length
+      : 0;
+    const matchScore = hobbyOverlap + personalityOverlap;
+    return {
+      ...tasker.toObject(),
+      matchScore,
+    };
+  });
+
+  // Sort by matchScore descending, then by rating
+  scoredTaskers.sort((a, b) => b.matchScore - a.matchScore || (b.rating || 0) - (a.rating || 0));
+
+  res.status(200).json({
+    status: 'success',
+    results: scoredTaskers.length,
+    data: { taskers: scoredTaskers },
+  });
+});
+
+// --- Controller: Get public profile ---
+export const getPublicProfile = catchAsync(async (req, res, next) => {
+  const userId = req.params.userId;
+  const user = await User.findById(userId).select(
+    '_id firstName lastName profileImage bio hobbies peoplePreference skills address rating role'
+  );
+  if (!user) {
+    return next(new AppError('No user found with that ID', 404));
+  }
+  // Only return city and state from address
+  const publicUser = user.toObject();
+  if (publicUser.address) {
+    publicUser.address = {
+      city: publicUser.address.city,
+      state: publicUser.address.state,
+    };
+  }
+  res.status(200).json({
+    status: 'success',
+    data: { user: publicUser },
+  });
+});
+
 // --- ADMIN CONTROLLERS ---
 
 // Get All Users (Admin)

@@ -120,6 +120,20 @@ const paymentSchema = new mongoose.Schema(
     // --- Timestamps ---
     succeededAt: { type: Date }, // Timestamp for when the payment was successful
     refundedAt: { type: Date }, // Timestamp for when the payment was refunded
+
+    // Tax amount (in cents)
+    taxAmount: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+
+    // Amount after tax (in cents)
+    amountAfterTax: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
   },
   {
     timestamps: true, // Automatically manage createdAt and updatedAt fields
@@ -128,26 +142,30 @@ const paymentSchema = new mongoose.Schema(
 
 // Pre-save hook to calculate fees and update timestamps when the payment is saved
 paymentSchema.pre("save", async function (next) {
-  // Calculate platform fee and amount received by Tasker if the amount or status is modified
+  // Calculate platform fee, tax, and amount received by Tasker if the amount or status is modified
   if (this.isModified("amount") || this.isNew) {
     // Fetch platform fee percentage from environment variables, default to 0% if not set
     const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-
-    // Fixed fees value defined
     const fixedFeeCents = 500; // $5.00 in cents
     const percentageFee = Math.round(this.amount * (feePercentage / 100));
-
-    // Calculate application fee (rounded to nearest cent) and amount received by Tasker
     this.applicationFeeAmount = percentageFee + fixedFeeCents;
+
+    // Calculate tax (from environment variable, default 13%)
+    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
+    this.taxAmount = Math.round(this.amount * taxPercent);
+    // Amount after tax (what goes to escrow)
+    this.amountAfterTax = this.amount - this.taxAmount;
+
+    // Amount received by Tasker (after platform fee and tax)
     this.amountReceivedByPayee = Math.max(
       0,
-      this.amount - this.applicationFeeAmount
+      this.amountAfterTax - this.applicationFeeAmount
     );
 
     // Optional: Log a warning if fee exceeds amount significantly
-    if (this.applicationFeeAmount >= this.amount) {
+    if (this.applicationFeeAmount >= this.amountAfterTax) {
       console.warn(
-        `WARNING: Calculated applicationFeeAmount (${this.applicationFeeAmount}) meets or exceeds total amount (${this.amount}) for Payment ${this._id}`
+        `WARNING: Calculated applicationFeeAmount (${this.applicationFeeAmount}) meets or exceeds total after-tax amount (${this.amountAfterTax}) for Payment ${this._id}`
       );
     }
   }

@@ -219,11 +219,12 @@ export const getUserPosts = catchAsync(async (req, res, next) => {
   const limit = parseInt(req.query.limit, 10) || 10;
   const skip = (page - 1) * limit;
 
-  const posts = await Post.find({ author: userId }) // Direct filter by author
-    .sort({ createdAt: -1 }) // Default sort for user's posts
+  // Always fetch only posts by this user, sorted by recency
+  const posts = await Post.find({ author: userId })
+    .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
-    .select("-__v"); // Population of author/comments handled by pre-find hook
+    .select("-__v");
 
   // Optional: Get total count for pagination
   const totalPosts = await Post.countDocuments({ author: userId });
