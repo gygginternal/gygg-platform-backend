@@ -5,15 +5,17 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
-import AWS from "aws-sdk";
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid"; // For generating unique filenames
 
 // Configure AWS S3
-const s3 = new AWS.S3({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID, // Replace with your AWS access key
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, // Replace with your AWS secret key
-  region: process.env.AWS_REGION, // Replace with your AWS region
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
 
 // Configure multer for file upload
@@ -153,7 +155,7 @@ export const createPost = catchAsync(async (req, res, next) => {
     };
 
     try {
-      const uploadResult = await s3.upload(params).promise();
+      const uploadResult = await s3Client.send(new PutObjectCommand(params));
       mediaUrl = uploadResult.Location; // Get the uploaded file's URL
     } catch (error) {
       return next(new AppError("Failed to upload image to S3.", 500));

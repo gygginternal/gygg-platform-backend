@@ -80,7 +80,7 @@ export const sendMessage = catchAsync(async (req, res, next) => {
   if (contract) {
     // If there's a contract, determine receiver based on contract parties
     receiverId =
-      contract.provider._id.toString() === req.user.id
+    contract.provider._id.toString() === req.user.id
         ? contract.tasker._id
         : contract.provider._id;
   } else {
@@ -136,7 +136,7 @@ export const getChatHistory = catchAsync(async (req, res, next) => {
 
   // Verify that the user is authorized to view the chat history
   if (contractId) {
-    await verifyContractParty(contractId, req.user.id);
+  await verifyContractParty(contractId, req.user.id);
   } else if (!userId) {
     return next(new AppError("Either contractId or userId is required.", 400));
   }
@@ -203,7 +203,7 @@ export const getConversations = catchAsync(async (req, res, next) => {
           { receiver: userId }
         ]
       }
-    },
+      },
     {
       $sort: { timestamp: -1 }
     },

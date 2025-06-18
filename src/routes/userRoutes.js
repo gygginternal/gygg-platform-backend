@@ -33,10 +33,10 @@ const router = express.Router();
 
 // --- PUBLIC PROFILE ROUTE (must be before any /:id or similar catch-all routes) ---
 router.get('/public/:userId', [
-  protect,
   param('userId').isMongoId().withMessage('Invalid user ID format'),
   validateRequest,
-], getPublicProfile);
+  getPublicProfile
+]);
 
 /**
  * ===============================
@@ -82,6 +82,15 @@ router.get('/verifyEmail/:token', verifyEmail); // Token validated by controller
 //     body('passwordConfirm').custom((value, { req }) => { if (value !== req.body.password) throw new Error('New passwords do not match.'); return true; }),
 // ], validateRequest, resetPassword);
 
+// Route to view *another* user's public album (must be above router.use(protect))
+router.get('/users/:userId/album', (req, res, next) => {
+  delete req.headers.authorization;
+  next();
+}, [
+  param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
+  validateRequest,
+  getUserAlbum
+]);
 
 /**
  * ===============================
@@ -134,8 +143,8 @@ const updateMeValidation = [
     body('password').not().exists().withMessage('Password updates not allowed here.'),
 ];
 router.patch('/updateMe',
-    uploadS3.single('profileImage'), // Multer for profile image (field name 'profileImage')
-    parseJsonFields(['address', 'availability']), // <<< Parse stringified JSON fields from FormData
+    uploadS3.single('profileImage'),
+    parseJsonFields(['address', 'availability']),
     updateMeValidation,
     validateRequest,
     updateMe
@@ -151,7 +160,7 @@ router.delete('/deleteMe', deleteMe);
 router.route('/me/album')
     .get(getUserAlbum)
     .post(
-        uploadS3.single('albumImage'), // Multer for 'albumImage' field
+        uploadS3.single('albumImage'),
         [ body('caption').trim().notEmpty().withMessage('Caption is required.').isLength({ max: 50 }).escape() ],
         validateRequest,
         uploadAlbumPhoto
@@ -160,11 +169,6 @@ router.route('/me/album')
 router.delete('/me/album/:photoId', [
     param('photoId').isMongoId().withMessage('Invalid photo ID format'),
 ], validateRequest, deleteAlbumPhoto);
-
-// Route to view *another* user's public album
-router.get('/users/:userId/album', [ // Changed path for clarity
-    param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
-], validateRequest, getUserAlbum);
 
 /**
  * ===============================

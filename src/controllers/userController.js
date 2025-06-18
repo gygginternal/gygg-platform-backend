@@ -201,8 +201,8 @@ export const uploadAlbumPhoto = catchAsync(async (req, res, next) => {
 
 // --- Controller: Get user album (own or another user's) ---
 export const getUserAlbum = catchAsync(async (req, res, next) => {
-  // ... (Implementation from previous response - looks good)
-  const userIdToFetch = req.params.userId || req.user.id;
+  // Use userId from params if present, otherwise from req.user (if authenticated)
+  const userIdToFetch = req.params.userId || (req.user && req.user.id);
   if (!mongoose.Types.ObjectId.isValid(userIdToFetch)) return next(new AppError('Invalid user ID format.', 400));
   logger.debug(`getUserAlbum: Fetching album for user ID: ${userIdToFetch}`);
   const userWithAlbum = await User.findById(userIdToFetch).select('album firstName lastName');

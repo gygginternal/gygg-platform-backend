@@ -90,7 +90,7 @@ export const initializeChatWebsocket = (server) => {
         messageId: newMessage._id,
         senderId: newMessage.sender.toString(),
         senderName: senderUser ? senderUser.firstName : "", // Use populated firstName
-        contractId: newMessage.contract.toString(),
+        contractId: newMessage.contract ? newMessage.contract.toString() : null,
         timestamp: newMessage.timestamp,
       });
     } else if (change.operationType === 'update' && change.updateDescription.updatedFields.readStatus) {
