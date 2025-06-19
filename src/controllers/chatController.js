@@ -155,6 +155,16 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     chatWebsocket.emitUnreadCountUpdate(receiverId, unreadCount);
   }
 
+  // Create notification for new message
+  await Notification.create({
+    user: receiverId,
+    type: 'new_message',
+    message: `${req.user.firstName} sent you a message`,
+    data: { contractId },
+    icon: 'message.svg',
+    link: '/messages',
+  });
+
   // Respond with the newly created message
   res.status(201).json({
     status: "success",

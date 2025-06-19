@@ -36,6 +36,14 @@ const notificationSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  icon: {
+    type: String,
+    required: false,
+  },
+  link: {
+    type: String,
+    required: false,
+  },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 const Notification = mongoose.model('Notification', notificationSchema);

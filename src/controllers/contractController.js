@@ -290,9 +290,21 @@ export const approveCompletionAndRelease = catchAsync(
     // Notify tasker
     await sendNotification({
       user: contract.tasker,
-      type: 'gig_completed',
-      message: `Gig ${contract.gig} marked as completed!`,
+      type: 'contract_accepted',
+      message: `Your contract has been accepted!`,
       data: { contractId: contract._id, gigId: contract.gig },
+      icon: 'contract.svg',
+      link: '/contracts',
+    });
+
+    // Notify tasker of payment received
+    await sendNotification({
+      user: contract.tasker,
+      type: 'payment_received',
+      message: `Payment received for contract!`,
+      data: { contractId: contract._id, gigId: contract.gig },
+      icon: 'money.svg',
+      link: '/contracts',
     });
 
     return res.status(200).json({
@@ -440,10 +452,10 @@ export const deleteContract = catchAsync(async (req, res, next) => {
 });
 
 // Helper to send notification
-async function sendNotification({ user, type, message, data }) {
+async function sendNotification({ user, type, message, data, icon, link }) {
   try {
-    await Notification.create({ user, type, message, data });
+    await Notification.create({ user, type, message, data, icon, link });
   } catch (err) {
-    console.error('Failed to send notification', { user, type, message, data, err });
+    console.error('Failed to send notification', { user, type, message, data, icon, link, err });
   }
 }

@@ -285,6 +285,8 @@ export const likePost = catchAsync(async (req, res, next) => {
       type: 'new_like',
       message: `${req.user.firstName} liked your post`,
       data: { postId: post._id },
+      icon: 'post.svg',
+      link: '/feed',
     });
   }
 
@@ -372,6 +374,8 @@ export const addComment = catchAsync(async (req, res, next) => {
       type: 'new_comment',
       message: `${req.user.firstName} commented on your post`,
       data: { postId: post._id },
+      icon: 'post.svg',
+      link: '/feed',
     });
   }
 
