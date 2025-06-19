@@ -11,11 +11,11 @@ import {
   matchGigsForTasker,
   getMyApplicationForGig,
   getMyGigsWithNoApplications, // Match gigs to a tasker based on their hobbies and personality traits
+  applyToGig,
 } from "../controllers/gigController.js";
 
 import { protect, restrictTo } from "../controllers/authController.js"; // Auth middlewares to secure and authorize access
 import {
-  applyToGig,
   listGigApplications,
 } from "../controllers/applicanceController.js";
 import { topMatchGigs } from "../controllers/taskersController.js";
@@ -206,10 +206,9 @@ router.patch(
 );
 
 router.post(
-  "/:gigId/apply",
+  "/apply",
   [
     restrictTo("tasker"), // Only taskers can apply for a gig
-    param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
   ],
   validateRequest,
   applyToGig // Calls the controller to handle the application

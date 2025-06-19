@@ -8,6 +8,8 @@ import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import Applicance from "../models/Applicance.js";
 import { Offer } from "../models/Offer.js";
+import Notification from '../models/Notification.js';
+import Review from '../models/Review.js';
 
 export const getMyContracts = catchAsync(async (req, res, next) => {
   const userId = req.user._id; // Get the logged-in user's ID
@@ -285,6 +287,14 @@ export const approveCompletionAndRelease = catchAsync(
       `Contract ${contract._id} marked as completed by Provider ${userId}.`
     );
 
+    // Notify tasker
+    await sendNotification({
+      user: contract.tasker,
+      type: 'gig_completed',
+      message: `Gig ${contract.gig} marked as completed!`,
+      data: { contractId: contract._id, gigId: contract.gig },
+    });
+
     return res.status(200).json({
       status: "success",
       message:
@@ -409,47 +419,31 @@ export const cancelContract = catchAsync(async (req, res, next) => {
 });
 
 export const deleteContract = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
-
-  // Find the contract by ID
-  const contract = await Contract.findById(id);
-
-  if (!contract) {
-    return next(new AppError("Contract not found.", 404));
+  const contractId = req.params.id;
+  const contract = await Contract.findById(contractId);
+  if (!contract) return next(new AppError('No contract found with that ID', 404));
+  // Only provider, tasker, or admin can delete
+  if (![contract.provider.toString(), contract.tasker.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
+    return next(new AppError('You do not have permission to delete this contract.', 403));
   }
-
-  // Check if the logged-in user is authorized to delete the contract
-  if (contract.provider._id.toString() !== req.user._id.toString()) {
-    return next(
-      new AppError("You are not authorized to delete this contract.", 403)
-    );
-  }
-
-  // Update the gig's status to "unassigned" if the contract is deleted
-  const gig = await Gig.findById(contract.gig);
-  if (gig) {
-    gig.status = "unassigned";
-    gig.assignedTasker = null; // Clear the assigned tasker
-    await gig.save();
-  }
-
-  // Find the related application and set its status to "pending"
-  const application = await Applicance.findOne({
-    gig: contract.gig,
-    user: contract.tasker,
-  });
-
-  if (application) {
-    application.status = "pending";
-    await application.save();
-  }
-
-  // Delete the contract from the database
-  await Contract.findByIdAndDelete(contract._id);
-
-  res.status(200).json({
-    status: "success",
-    message:
-      "Contract successfully deleted. Related application status set to pending.",
-  });
+  // Cascade delete related records
+  await Promise.all([
+    Payment.deleteMany({ contract: contractId }),
+    Review.deleteMany({ contract: contractId }),
+    Notification.deleteMany({ 'data.contractId': contractId }),
+    Offer.deleteMany({ application: contractId }),
+  ]);
+  await Contract.findByIdAndDelete(contractId);
+  logger.warn(`Contract ${contractId} and related data deleted by user ${req.user.id}`);
+  await notifyAdmin('Contract deleted', { contractId, deletedBy: req.user.id });
+  res.status(204).json({ status: 'success', data: null });
 });
+
+// Helper to send notification
+async function sendNotification({ user, type, message, data }) {
+  try {
+    await Notification.create({ user, type, message, data });
+  } catch (err) {
+    console.error('Failed to send notification', { user, type, message, data, err });
+  }
+}

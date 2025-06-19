@@ -6,6 +6,36 @@ import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import User from "../models/User.js"; // Imported for matchGigsForTasker
 import Applicance from "../models/Applicance.js"; // Assuming Applicance is the model for applications
+import Notification from '../models/Notification.js';
+import Payment from '../models/Payment.js';
+import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import Post from '../models/Post.js';
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+async function deleteS3Attachments(attachments) {
+  if (!attachments || !Array.isArray(attachments)) return;
+  for (const url of attachments) {
+    // Extract S3 key from URL (assuming standard S3 URL structure)
+    const key = url.split('.amazonaws.com/')[1];
+    if (key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: key,
+        }));
+      } catch (err) {
+        logger.error('Failed to delete S3 attachment', { key, err });
+      }
+    }
+  }
+}
 
 export const getMyApplicationForGig = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
@@ -70,7 +100,7 @@ const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
  */
 export const getAllGigs = catchAsync(async (req, res, next) => {
   const queryObj = { ...req.query };
-  const excludedFields = ["page", "sort", "limit", "fields", "search"]; // 'search' is handled separately
+  const excludedFields = ["page", "sort", "limit", "fields", "search", "minPrice", "maxPrice"]; // Added price range fields
   excludedFields.forEach((el) => delete queryObj[el]);
 
   // --- Handle Text Search ---
@@ -85,34 +115,57 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
     projection.score = { $meta: "textScore" };
     sortOptions = { score: { $meta: "textScore" }, ...sortOptions }; // Sort by relevance, then by default
   }
-  // --- End Text Search ---
 
-  // --- Handle other filters (e.g., status, category) ---
-  // Convert query params like 'isRemote=true' to boolean
+  // --- Handle Category Filter ---
+  if (req.query.category && req.query.category !== "All") {
+    queryObj.category = req.query.category;
+    logger.debug(`getAllGigs: Filtering by category: "${req.query.category}"`);
+  }
+
+  // --- Handle Location Filter ---
+  if (req.query.location && req.query.location.trim() !== "") {
+    const locationRegex = new RegExp(req.query.location.trim(), 'i');
+    queryObj.$or = [
+      { 'location.city': locationRegex },
+      { 'location.state': locationRegex },
+      { 'location.country': locationRegex }
+    ];
+    logger.debug(`getAllGigs: Filtering by location: "${req.query.location}"`);
+  }
+
+  // --- Handle Price Range Filter ---
+  if (req.query.minPrice || req.query.maxPrice) {
+    queryObj.cost = {};
+    if (req.query.minPrice) {
+      queryObj.cost.$gte = parseFloat(req.query.minPrice);
+    }
+    if (req.query.maxPrice) {
+      queryObj.cost.$lte = parseFloat(req.query.maxPrice);
+    }
+    logger.debug(`getAllGigs: Filtering by price range: ${req.query.minPrice || '0'} - ${req.query.maxPrice || '∞'}`);
+  }
+
+  // --- Handle Remote Filter ---
   if (queryObj.isRemote !== undefined) {
     queryObj.isRemote = queryObj.isRemote === "true";
   }
-  // Add more specific filters as needed (e.g., cost range)
-  // Example: if (queryObj.minCost) queryObj.cost = { ...queryObj.cost, $gte: parseFloat(queryObj.minCost) };
-  // Example: if (queryObj.maxCost) queryObj.cost = { ...queryObj.cost, $lte: parseFloat(queryObj.maxCost) };
+
+  // --- Handle Status Filter ---
+  if (!queryObj.status) {
+    queryObj.status = "open"; // Default to showing only open gigs
+  }
 
   logger.debug(
     "getAllGigs: Final query object (excluding sort/page/limit/fields):",
     queryObj
   );
-  let query = Gig.find(queryObj, projection); // Apply projection if text search is used
+  let query = Gig.find(queryObj, projection);
 
   // --- Sorting ---
   if (req.query.sort) {
-    // If a custom sort is provided AND we are not doing a text search (or want to override its relevance sort)
-    if (
-      !queryObj.$text ||
-      (queryObj.$text && !req.query.sort.includes("score"))
-    ) {
-      const sortBy = req.query.sort.split(",").join(" ");
-      sortOptions = sortBy; // Mongoose sort() can take string directly
-      logger.debug(`getAllGigs: Applying custom sort: "${sortBy}"`);
-    }
+    const sortBy = req.query.sort.split(",").join(" ");
+    sortOptions = sortBy;
+    logger.debug(`getAllGigs: Applying custom sort: "${sortBy}"`);
   }
   query = query.sort(sortOptions);
 
@@ -121,21 +174,19 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
     const fields = req.query.fields.split(",").join(" ");
     query = query.select(fields);
   } else {
-    query = query.select("-__v"); // Exclude __v by default
+    query = query.select("-__v");
   }
 
   // --- Pagination ---
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10; // Default to 10 results per page
+  const limit = parseInt(req.query.limit, 10) || 10;
   const skip = (page - 1) * limit;
   query = query.skip(skip).limit(limit);
 
   // --- Execute Query ---
-  const gigs = await query; // Population is handled by pre-find hook in Gig model
+  const gigs = await query;
 
-  // Optionally, get total count for pagination metadata
-  // Create a separate count query that matches the filters (excluding pagination/sort for count)
-  // This can be expensive if not optimized.
+  // Get total count for pagination metadata
   const totalGigs = await Gig.countDocuments(queryObj);
 
   logger.info(
@@ -145,7 +196,7 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: "success",
     results: gigs.length,
-    total: totalGigs, // Total documents matching the filter criteria
+    total: totalGigs,
     page: page,
     totalPages: Math.ceil(totalGigs / limit),
     data: { gigs },
@@ -269,7 +320,19 @@ export const deleteGig = catchAsync(async (req, res, next) => {
 
   checkOwnershipOrAdmin(gig.postedBy._id, req.user); // Pass postedBy ID
 
-  // Stricter check: Only allow deletion if it's 'open' or 'cancelled'
+  // Prevent deletion if contracts exist
+  const contractCount = await Contract.countDocuments({ gig: gigId });
+  if (contractCount > 0) {
+    return next(new AppError('Cannot delete gig with existing contracts. Cancel contracts first.', 400));
+  }
+
+  // Prevent deletion if payments exist
+  const paymentCount = await Payment.countDocuments({ gig: gigId });
+  if (paymentCount > 0) {
+    return next(new AppError('Cannot delete gig with existing payments. Refund/cancel payments first.', 400));
+  }
+
+  // Only allow deletion if it's 'open' or 'cancelled'
   if (!["open", "cancelled"].includes(gig.status)) {
     return next(
       new AppError(
@@ -278,16 +341,63 @@ export const deleteGig = catchAsync(async (req, res, next) => {
       )
     );
   }
-  // TODO: What about associated contracts or payments if any exist for an 'open' gig?
-  // Usually, if a contract exists, deletion should be blocked.
+
+  // Delete related attachments from S3 if any
+  if (gig.attachments && gig.attachments.length > 0) {
+    await deleteS3Attachments(gig.attachments);
+  }
+
+  // Cascade delete related records
+  await Promise.all([
+    Contract.deleteMany({ gig: gigId }),
+    Payment.deleteMany({ gig: gigId }),
+    Offer.deleteMany({ gig: gigId }),
+    Applicance.deleteMany({ gig: gigId }),
+    Review.deleteMany({ gig: gigId }),
+    Notification.deleteMany({ 'data.gigId': gigId }),
+    Post.deleteMany({ 'data.gigId': gigId }),
+  ]);
 
   await Gig.findByIdAndDelete(gigId);
-  logger.warn(
-    `deleteGig: Gig ${gigId} deleted successfully by user ${req.user.id}.`
-  );
-  // TODO: Delete related attachments from S3 if any.
+  logger.warn(`Gig ${gigId} and all related data deleted by user ${req.user.id}.`);
+  await notifyAdmin('Gig deleted', { gigId, deletedBy: req.user.id });
 
   res.status(204).json({ status: "success", data: null });
+});
+
+// Helper to send notification
+async function sendNotification({ user, type, message, data }) {
+  try {
+    await Notification.create({ user, type, message, data });
+  } catch (err) {
+    logger.error('Failed to send notification', { user, type, message, data, err });
+  }
+}
+
+// --- Handler: User applies to a gig (application creation) ---
+export const applyToGig = catchAsync(async (req, res, next) => {
+  const { gigId } = req.body;
+  const userId = req.user._id;
+  const gig = await Gig.findById(gigId);
+  if (!gig) return next(new AppError('Gig not found', 404));
+
+  // Check if already applied
+  const existing = await Applicance.findOne({ gig: gigId, user: userId });
+  if (existing) return next(new AppError('Already applied to this gig', 400));
+
+  const application = await Applicance.create({ gig: gigId, user: userId, status: 'pending' });
+
+  // Notify provider
+  if (gig.postedBy.toString() !== userId.toString()) {
+    await sendNotification({
+      user: gig.postedBy,
+      type: 'gig_application',
+      message: `${req.user.firstName} applied to your gig: ${gig.title}`,
+      data: { gigId: gig._id, applicationId: application._id },
+    });
+  }
+
+  res.status(201).json({ status: 'success', data: { application } });
 });
 
 /**
@@ -326,6 +436,15 @@ export const acceptGig = catchAsync(async (req, res, next) => {
     });
     logger.info(`Contract ${newContract._id} created for Gig ${gigId}`);
     const updatedGigWithPopulatedTasker = await Gig.findById(gigId);
+
+    // Notify applicant (tasker)
+    await sendNotification({
+      user: taskerId,
+      type: 'gig_accepted',
+      message: `Your application for ${gig.title} was accepted!`,
+      data: { gigId: gig._id, contractId: newContract._id },
+    });
+
     res.status(200).json({
       status: "success",
       message: "Gig accepted. Contract created, awaiting payment.",

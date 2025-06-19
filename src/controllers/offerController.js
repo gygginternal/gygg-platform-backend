@@ -3,6 +3,9 @@ import Contract from "../models/Contract.js"; // Import the Contract model
 import ChatMessage from "../models/ChatMessage.js"; // Import ChatMessage model
 import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/AppError.js";
+import Notification from '../models/Notification.js';
+import logger from '../utils/logger.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 /**
  * Controller to accept an offer.
@@ -117,43 +120,19 @@ export const declineOffer = catchAsync(async (req, res, next) => {
  * @param {function} next - The next middleware function.
  */
 export const deleteOffer = catchAsync(async (req, res, next) => {
-  const { offerId } = req.params; // Extract offer ID from route parameters
-
-  // Find the offer by ID
+  const offerId = req.params.id;
   const offer = await Offer.findById(offerId);
-  if (!offer) {
-    return next(new AppError("Offer not found.", 404));
+  if (!offer) return next(new AppError('No offer found with that ID', 404));
+  // Only provider, tasker, or admin can delete
+  if (![offer.provider.toString(), offer.tasker.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
+    return next(new AppError('You do not have permission to delete this offer.', 403));
   }
-
-  // Ensure the logged-in user is either the provider or the tasker associated with the offer
-  const isAuthorized =
-    offer.provider.toString() === req.user.id ||
-    offer.tasker.toString() === req.user.id;
-
-  if (!isAuthorized) {
-    return next(
-      new AppError("You are not authorized to delete this offer.", 403)
-    );
-  }
-
-  // Delete the offer
-  await offer.deleteOne();
-
-  // Send a chat message to notify the other party
-  const receiverId =
-    req.user.id === offer.provider.toString() ? offer.tasker : offer.provider;
-
-  await ChatMessage.create({
-    contract: offer.contract || null, // If the offer is linked to a contract
-    sender: req.user.id, // User who deleted the offer
-    receiver: receiverId, // The other party
-    content: `The offer has been deleted by ${req.user.firstName}.`,
-  });
-
-  res.status(200).json({
-    status: "success",
-    message: "Offer deleted successfully.",
-  });
+  // Cascade delete related notifications
+  await Notification.deleteMany({ 'data.offerId': offerId });
+  await Offer.findByIdAndDelete(offerId);
+  logger.warn(`Offer ${offerId} deleted by user ${req.user.id}`);
+  await notifyAdmin('Offer deleted', { offerId, deletedBy: req.user.id });
+  res.status(204).json({ status: 'success', data: null });
 });
 
 /**

@@ -21,6 +21,7 @@ import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicanceRouter from "./routes/applicanceRoutes.js";
 import offerRouter from "./routes/offerRoutes.js";
+import notificationRoutes from './routes/notificationRoutes.js';
 
 // Stripe Webhook Handler
 import { stripeWebhookHandler } from "./controllers/paymentController.js";
@@ -65,6 +66,7 @@ app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
 app.use("/api/v1/applicances", applicanceRouter);
 app.use("/api/v1/offers", offerRouter);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // --- Error Handling ---
 app.all('*', (req, res, next) => {

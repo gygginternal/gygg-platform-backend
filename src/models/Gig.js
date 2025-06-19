@@ -39,18 +39,25 @@ const gigSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: [true, "A gig must have a title"],
+      required: [true, "Title is required"],
       trim: true,
-      maxlength: [100, "A gig title cannot be more than 100 characters"],
+      minlength: [5, "Title must be at least 5 characters long"],
+      maxlength: [100, "Title cannot exceed 100 characters"],
     },
     description: {
       type: String,
-      required: [true, "A gig must have a description"],
+      required: [true, "Description is required"],
       trim: true,
+      minlength: [20, "Description must be at least 20 characters long"],
+      maxlength: [2000, "Description cannot exceed 2000 characters"],
     },
     category: {
       type: String,
-      required: [true, "A gig must have a category"],
+      required: [true, "Category is required"],
+      enum: {
+        values: CATEGORY_ENUM,
+        message: "Invalid category. Please select from the provided options.",
+      },
     },
     subcategory: {
       type: String,

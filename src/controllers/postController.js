@@ -5,9 +5,10 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid"; // For generating unique filenames
+import Notification from '../models/Notification.js';
 
 // Configure AWS S3
 const s3Client = new S3Client({
@@ -245,19 +246,14 @@ export const getUserPosts = catchAsync(async (req, res, next) => {
 
 // Route handler to delete a post
 export const deletePost = catchAsync(async (req, res, next) => {
-  const post = await Post.findById(req.params.id); // Find the post by ID
-  if (!post) {
-    return next(new AppError("No post found with that ID", 404)); // Handle if post not found
-  }
-
-  // Check ownership or admin role before allowing deletion
+  const post = await Post.findById(req.params.id);
+  if (!post) return next(new AppError('No post found with that ID', 404));
   checkOwnershipOrAdmin(post.author, req.user);
-
-  // Delete the post from the database
-  await Post.findByIdAndDelete(req.params.id);
-
-  // Return success response
-  res.status(204).json({ status: "success", data: null });
+  await deleteS3Media(post.media);
+  await Post.findByIdAndDelete(post._id);
+  logger.warn(`Post ${post._id} deleted by user ${req.user.id}`);
+  await notifyAdmin('Post deleted', { postId: post._id, author: post.author });
+  res.status(204).json({ status: 'success', data: null });
 });
 
 // Route handler to like a post
@@ -282,6 +278,15 @@ export const likePost = catchAsync(async (req, res, next) => {
 
   // Save the updated post
   await post.save();
+
+  if (post.author !== req.user.id) {
+    await Notification.create({
+      user: post.author,
+      type: 'new_like',
+      message: `${req.user.firstName} liked your post`,
+      data: { postId: post._id },
+    });
+  }
 
   res.status(200).json({
     status: "success",
@@ -345,33 +350,37 @@ export const addComment = catchAsync(async (req, res, next) => {
   };
 
   // Update the post with the new comment
-  const post = await Post.findByIdAndUpdate(
+  await Post.findByIdAndUpdate(
     postId,
     {
       $push: { comments: comment },
-      // $inc: { commentCount: 1 } // Optionally increment here or rely on pre-save hook
     },
-    { new: true, runValidators: true } // runValidators for the main Post schema if needed
-  ).populate("comments.author", "firstName lastName profileImage"); // Populate for response
+    { new: true, runValidators: true }
+  );
 
+  // Fetch the updated post and trigger pre-save hook
+  const post = await Post.findById(postId).populate("comments.author", "firstName lastName profileImage");
   if (!post) {
     return next(new AppError("No post found with that ID", 404));
   }
+  post.markModified('comments');
+  await post.save({ validateBeforeSave: false });
 
-  // If your Post model has a pre-save hook to update commentCount,
-  // you might need to call post.save() if findByIdAndUpdate doesn't trigger it
-  // for subdocument array changes for count.
-  // However, if you incremented commentCount with $inc, post.save() isn't strictly for the count.
-  // For the sake of ensuring the pre-save hook for commentCount runs (if it exists):
-  // (This save also triggers the likeCount update if likes were modified, but they weren't here)
-  await post.save({ validateBeforeSave: false }); // Call save to trigger hooks
+  if (post.author !== req.user.id) {
+    await Notification.create({
+      user: post.author,
+      type: 'new_comment',
+      message: `${req.user.firstName} commented on your post`,
+      data: { postId: post._id },
+    });
+  }
 
   logger.info(`Comment added to post ${postId} by user ${userId}`);
 
   res.status(201).json({
     status: "success",
     data: {
-      post, // Return the updated post with the new comment
+      post,
     },
   });
 });
@@ -403,7 +412,38 @@ export const deleteComment = catchAsync(async (req, res, next) => {
 
   // Remove the comment from the post's comments array
   comment.remove();
+  post.markModified('comments');
   await post.save(); // Save the post after removal
 
   res.status(204).json({ status: "success", data: null }); // Return success response
 });
+
+async function deleteS3Media(media) {
+  if (!media || !Array.isArray(media)) return;
+  for (const url of media) {
+    const key = url.split('.amazonaws.com/')[1];
+    if (key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: key,
+        }));
+      } catch (err) {
+        logger.error('Failed to delete S3 media', { key, err });
+      }
+    }
+  }
+}
+
+async function notifyAdmin(message, data) {
+  try {
+    await Notification.create({
+      user: process.env.ADMIN_USER_ID,
+      type: 'system',
+      message,
+      data,
+    });
+  } catch (err) {
+    logger.error('Failed to notify admin', { message, data, err });
+  }
+}

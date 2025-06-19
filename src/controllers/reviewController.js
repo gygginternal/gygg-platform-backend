@@ -3,6 +3,9 @@ import Review from '../models/Review.js';
 import Contract from '../models/Contract.js';
 import AppError from '../utils/AppError.js';
 import catchAsync from '../utils/catchAsync.js';
+import Notification from '../models/Notification.js';
+import logger from '../utils/logger.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 /**
  * @desc Create a review (only by Provider after contract completion)
@@ -140,22 +143,16 @@ export const updateReview = catchAsync(async (req, res, next) => {
  */
 export const deleteReview = catchAsync(async (req, res, next) => {
     const reviewId = req.params.id;
-    const userId = req.user.id;
-
     const review = await Review.findById(reviewId);
-    if (!review) {
-        return next(new AppError('No review found with that ID.', 404));
-    }
-
-    const isAdmin = req.user.role.includes('admin');
-    if (!review.reviewer.equals(userId) && !isAdmin) {
+    if (!review) return next(new AppError('No review found with that ID', 404));
+    // Only reviewer, reviewee, or admin can delete
+    if (![review.reviewer.toString(), review.reviewee.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
         return next(new AppError('You do not have permission to delete this review.', 403));
     }
-
-    await Review.findByIdAndDelete(reviewId); // Triggers post-remove hook
-
-    res.status(204).json({
-        status: 'success',
-        data: null,
-    });
+    // Cascade delete related notifications
+    await Notification.deleteMany({ 'data.reviewId': reviewId });
+    await Review.findByIdAndDelete(reviewId);
+    logger.warn(`Review ${reviewId} deleted by user ${req.user.id}`);
+    await notifyAdmin('Review deleted', { reviewId, deletedBy: req.user.id });
+    res.status(204).json({ status: 'success', data: null });
 });

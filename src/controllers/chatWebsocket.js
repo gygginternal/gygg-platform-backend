@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import { ChatMessage } from "../models/ChatMessage.js";
 import User from "../models/User.js"; // Import the User model
+import Notification from '../models/Notification.js';
 
 /**
  * Initialize WebSocket server for chat functionality.
@@ -8,10 +9,17 @@ import User from "../models/User.js"; // Import the User model
  */
 export const initializeChatWebsocket = (server) => {
   const io = new Server(server, {
-    path: "/socketio", // Define a custom path for WebSocket connections
+    path: "/socketio",
     cors: {
-      origin: "*", // Allow all origins (adjust for production security)
+      origin: process.env.FRONTEND_URL || "http://localhost:3000",
+      methods: ["GET", "POST"],
+      credentials: true,
+      allowedHeaders: ["Content-Type", "Authorization"]
     },
+    transports: ['websocket', 'polling'],
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000
   });
 
   // Store user socket mappings
@@ -24,12 +32,26 @@ export const initializeChatWebsocket = (server) => {
     socket.on("subscribeToNotifications", ({ userId }) => {
       console.log(`User ${userId} subscribed to notifications`);
       userSockets.set(userId, socket.id);
+      socket.join(userId);
     });
 
     // Handle user unsubscription from notifications
     socket.on("unsubscribeFromNotifications", ({ userId }) => {
       console.log(`User ${userId} unsubscribed from notifications`);
       userSockets.delete(userId);
+      socket.leave(userId);
+    });
+
+    // Handle joining a chat room
+    socket.on("join", (room) => {
+      console.log(`Socket ${socket.id} joining room: ${room}`);
+      socket.join(room);
+    });
+
+    // Handle leaving a chat room
+    socket.on("leave", (room) => {
+      console.log(`Socket ${socket.id} leaving room: ${room}`);
+      socket.leave(room);
     });
 
     // Handle disconnection
@@ -77,9 +99,16 @@ export const initializeChatWebsocket = (server) => {
       const chatChannel = `chat:${newMessage.sender}:${newMessage.receiver}`;
       console.log(`Emitting to chat channel: ${chatChannel}`);
       io.to(chatChannel).emit("newChatMessage", {
-        sender: newMessage.sender.toString(),
+        _id: newMessage._id,
+        sender: {
+          _id: newMessage.sender.toString(),
+          firstName: senderUser?.firstName || "",
+          lastName: senderUser?.lastName || "",
+          profileImage: senderUser?.profileImage || null
+        },
         receiver: newMessage.receiver.toString(),
         content: newMessage.content,
+        type: newMessage.type || 'text',
         timestamp: newMessage.timestamp,
       });
 
@@ -89,20 +118,29 @@ export const initializeChatWebsocket = (server) => {
       io.to(receiverNotificationChannel).emit("notification:newMessage", {
         messageId: newMessage._id,
         senderId: newMessage.sender.toString(),
-        senderName: senderUser ? senderUser.firstName : "", // Use populated firstName
-        contractId: newMessage.contract ? newMessage.contract.toString() : null,
+        senderName: senderUser ? senderUser.firstName : "",
         timestamp: newMessage.timestamp,
       });
     } else if (change.operationType === 'update' && change.updateDescription.updatedFields.readStatus) {
-        // A message was updated, and its readStatus changed
-        const updatedMessage = await ChatMessage.findById(change.documentKey._id);
-        if (updatedMessage && updatedMessage.readStatus === true) {
-            // If the message is now read, notify the receiver to refresh their unread count
-            const receiverId = updatedMessage.receiver.toString();
-            const notificationChannel = `user:${receiverId}`;
-            console.log(`Emitting unread count update notification to: ${notificationChannel}`);
-            io.to(notificationChannel).emit("notification:unreadCountUpdated");
-        }
+      // A message was updated, and its readStatus changed
+      const updatedMessage = await ChatMessage.findById(change.documentKey._id);
+      if (updatedMessage && updatedMessage.readStatus === true) {
+        // If the message is now read, notify the receiver to refresh their unread count
+        const receiverId = updatedMessage.receiver.toString();
+        const notificationChannel = `user:${receiverId}`;
+        console.log(`Emitting unread count update notification to: ${notificationChannel}`);
+        io.to(notificationChannel).emit("notification:unreadCountUpdated");
+      }
+    }
+  });
+
+  // Watch for new notifications and emit to the user
+  Notification.watch().on('change', async (change) => {
+    if (change.operationType === 'insert') {
+      const notification = change.fullDocument;
+      if (notification && notification.user) {
+        io.to(notification.user.toString()).emit('notification:new', notification);
+      }
     }
   });
 

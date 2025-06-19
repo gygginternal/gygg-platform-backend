@@ -6,6 +6,9 @@ import AppError from "../utils/AppError.js";
 import app from "../app.js";
 import { Offer } from "../models/Offer.js"; // Import the Offer model
 import User from "../models/User.js"; // Import the User model
+import Notification from '../models/Notification.js';
+import logger from '../utils/logger.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 /**
  * Controller to create an offer for an application.
@@ -279,4 +282,23 @@ export const topMatchApplicances = catchAsync(async (req, res, next) => {
     results: scoredMatches.length,
     data: { matches: scoredMatches },
   });
+});
+
+export const deleteApplication = catchAsync(async (req, res, next) => {
+  const applicationId = req.params.id;
+  const application = await Applicance.findById(applicationId);
+  if (!application) return next(new AppError('No application found with that ID', 404));
+  // Only user or admin can delete
+  if (application.user.toString() !== req.user.id && !req.user.role.includes('admin')) {
+    return next(new AppError('You do not have permission to delete this application.', 403));
+  }
+  // Cascade delete related offers and notifications
+  await Promise.all([
+    Offer.deleteMany({ application: applicationId }),
+    Notification.deleteMany({ 'data.applicationId': applicationId }),
+  ]);
+  await Applicance.findByIdAndDelete(applicationId);
+  logger.warn(`Application ${applicationId} and related data deleted by user ${req.user.id}`);
+  await notifyAdmin('Application deleted', { applicationId, deletedBy: req.user.id });
+  res.status(204).json({ status: 'success', data: null });
 });

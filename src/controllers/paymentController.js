@@ -5,6 +5,10 @@ import User from "../models/User.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import mongoose from "mongoose";
+import Notification from '../models/Notification.js';
+import { Offer } from '../models/Offer.js';
+import logger from '../utils/logger.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -764,4 +768,23 @@ export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
     );
     return next(new AppError("Could not retrieve account status.", 500));
   }
+});
+
+export const deletePayment = catchAsync(async (req, res, next) => {
+  const paymentId = req.params.id;
+  const payment = await Payment.findById(paymentId);
+  if (!payment) return next(new AppError('No payment found with that ID', 404));
+  // Only payer, payee, or admin can delete
+  if (![payment.payer.toString(), payment.payee.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
+    return next(new AppError('You do not have permission to delete this payment.', 403));
+  }
+  // Cascade delete related records
+  await Promise.all([
+    Notification.deleteMany({ 'data.paymentId': paymentId }),
+    Offer.deleteMany({ payment: paymentId }),
+  ]);
+  await Payment.findByIdAndDelete(paymentId);
+  logger.warn(`Payment ${paymentId} and related data deleted by user ${req.user.id}`);
+  await notifyAdmin('Payment deleted', { paymentId, deletedBy: req.user.id });
+  res.status(204).json({ status: 'success', data: null });
 });

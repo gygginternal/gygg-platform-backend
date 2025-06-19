@@ -3,12 +3,50 @@ import ChatMessage from "../models/ChatMessage.js";
 import Contract from "../models/Contract.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
+import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import Notification from '../models/Notification.js';
 
 let chatWebsocket;
 
 export const setChatWebsocket = (websocket) => {
   chatWebsocket = websocket;
 };
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+async function deleteS3Attachment(attachment) {
+  if (!attachment || !attachment.url) return;
+  const key = attachment.url.split('.amazonaws.com/')[1];
+  if (key) {
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: key,
+      }));
+    } catch (err) {
+      logger.error('Failed to delete S3 chat attachment', { key, err });
+    }
+  }
+}
+
+async function notifyAdmin(message, data) {
+  try {
+    await Notification.create({
+      user: process.env.ADMIN_USER_ID,
+      type: 'system',
+      message,
+      data,
+    });
+  } catch (err) {
+    logger.error('Failed to notify admin', { message, data, err });
+  }
+}
 
 /**
  * Helper function to verify if the user is part of the contract.
@@ -290,4 +328,16 @@ export const getUnreadMessageCount = catchAsync(async (req, res, next) => {
       unreadCount,
     },
   });
+});
+
+export const deleteChatMessage = catchAsync(async (req, res, next) => {
+  const message = await ChatMessage.findById(req.params.id);
+  if (!message) return next(new AppError('No chat message found with that ID', 404));
+  if (message.attachment && message.attachment.url) {
+    await deleteS3Attachment(message.attachment);
+  }
+  await ChatMessage.findByIdAndDelete(message._id);
+  logger.warn(`ChatMessage ${message._id} deleted by user ${req.user.id}`);
+  await notifyAdmin('Chat message deleted', { messageId: message._id, sender: message.sender });
+  res.status(204).json({ status: 'success', data: null });
 });

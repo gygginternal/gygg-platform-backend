@@ -198,7 +198,22 @@ const userSchema = new mongoose.Schema(
     active: {
       type: Boolean,
       default: true,
-      select: false,
+    },
+
+    // Social Graph
+    followers: [{
+      type: mongoose.Schema.ObjectId,
+      ref: 'User',
+    }],
+    following: [{
+      type: mongoose.Schema.ObjectId,
+      ref: 'User',
+    }],
+
+    // Verification Badge
+    isVerified: {
+      type: Boolean,
+      default: false,
     },
 
     // Onboarding Flags

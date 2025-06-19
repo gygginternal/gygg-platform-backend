@@ -5,6 +5,15 @@ import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import { s3Client } from "../config/s3Config.js"; // Assuming s3Config exports s3Client
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { Gig } from '../models/Gig.js';
+import Post from '../models/Post.js';
+import ChatMessage from '../models/ChatMessage.js';
+import Contract from '../models/Contract.js';
+import Payment from '../models/Payment.js';
+import { Offer } from '../models/Offer.js';
+import Applicance from '../models/Applicance.js';
+import Review from '../models/Review.js';
+import Notification from '../models/Notification.js';
 
 // --- Utility: Filter object to only allowed fields ---
 const filterObj = (obj, ...allowedFields) => {
@@ -169,8 +178,37 @@ export const updateMe = catchAsync(async (req, res, next) => {
 
 // --- Controller: Deactivate logged-in user's account ---
 export const deleteMe = catchAsync(async (req, res, next) => {
-  logger.warn(`User ${req.user.id} deactivating their account.`);
-  await User.findByIdAndUpdate(req.user.id, { active: false });
+  logger.warn(`User ${req.user.id} deleting their account. Starting cleanup.`);
+  const user = await User.findById(req.user.id).select('+profileImageKey album');
+  if (!user) return next(new AppError('User not found.', 404));
+
+  // S3: Delete profile image
+  await deleteS3Object(user.profileImageKey);
+  // S3: Delete album images
+  if (user.album && user.album.length > 0) {
+    for (const photo of user.album) {
+      await deleteS3Object(photo.key);
+    }
+  }
+
+  // DB: Cascade delete related records
+  await Promise.all([
+    Gig.deleteMany({ postedBy: user._id }),
+    Post.deleteMany({ author: user._id }),
+    ChatMessage.deleteMany({ $or: [{ sender: user._id }, { receiver: user._id }] }),
+    Contract.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
+    Payment.deleteMany({ $or: [{ payer: user._id }, { payee: user._id }] }),
+    Offer.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
+    Applicance.deleteMany({ user: user._id }),
+    Review.deleteMany({ $or: [{ reviewer: user._id }, { reviewee: user._id }] }),
+    Notification.deleteMany({ user: user._id }),
+  ]);
+
+  // Finally, delete the user
+  await User.findByIdAndDelete(user._id);
+  logger.warn(`User ${user._id} and all related data deleted.`);
+  await notifyAdmin('User account deleted', { userId: user._id, email: user.email });
+
   res.status(204).json({ status: 'success', data: null });
 });
 
@@ -537,3 +575,16 @@ export const deleteUser = catchAsync(async (req, res, next) => {
   );
   res.status(204).json({ status: "success", data: null });
 });
+
+async function notifyAdmin(message, data) {
+  try {
+    await Notification.create({
+      user: process.env.ADMIN_USER_ID, // Set this env var to your admin user ID
+      type: 'system',
+      message,
+      data,
+    });
+  } catch (err) {
+    logger.error('Failed to notify admin', { message, data, err });
+  }
+}
