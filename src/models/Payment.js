@@ -142,26 +142,22 @@ const paymentSchema = new mongoose.Schema(
 
 // Pre-save hook to calculate fees and update timestamps when the payment is saved
 paymentSchema.pre("save", async function (next) {
-  // Calculate platform fee, tax, and amount received by Tasker if the amount or status is modified
+  // Only the provider pays the platform fee (fixed + percent) and tax when posting a gig
+  // The tasker only pays the tax when withdrawing money (handled at payout, not here)
   if (this.isModified("amount") || this.isNew) {
-    // Fetch platform fee percentage from environment variables, default to 0% if not set
-    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-    const fixedFeeCents = 500; // $5.00 in cents
-    const percentageFee = Math.round(this.amount * (feePercentage / 100));
-    this.applicationFeeAmount = percentageFee + fixedFeeCents;
-
-    // Calculate tax (from environment variable, default 13%)
-    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
+    // Use environment variables for fee/tax configuration
+    // PLATFORM_FIXED_FEE_CENTS (default 500 = $5), PLATFORM_FEE_PERCENT (default 0.10 = 10%), TAX_PERCENT (default 0.13 = 13%)
+    const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
+    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
+    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
+    // Calculate tax on the total amount
     this.taxAmount = Math.round(this.amount * taxPercent);
     // Amount after tax (what goes to escrow)
     this.amountAfterTax = this.amount - this.taxAmount;
-
+    // Platform fee is only paid by provider when posting a gig
+    this.applicationFeeAmount = Math.round(this.amountAfterTax * feePercentage) + fixedFeeCents;
     // Amount received by Tasker (after platform fee and tax)
-    this.amountReceivedByPayee = Math.max(
-      0,
-      this.amountAfterTax - this.applicationFeeAmount
-    );
-
+    this.amountReceivedByPayee = Math.max(0, this.amountAfterTax - this.applicationFeeAmount);
     // Optional: Log a warning if fee exceeds amount significantly
     if (this.applicationFeeAmount >= this.amountAfterTax) {
       console.warn(
@@ -169,7 +165,6 @@ paymentSchema.pre("save", async function (next) {
       );
     }
   }
-
   // Update timestamps for successful or refunded payment status
   if (this.isModified("status")) {
     if (this.status === "succeeded" && !this.succeededAt) {
@@ -178,7 +173,6 @@ paymentSchema.pre("save", async function (next) {
       this.refundedAt = Date.now();
     }
   }
-
   next(); // Proceed to save the document
 });
 

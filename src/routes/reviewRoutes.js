@@ -3,6 +3,7 @@ import { body, param, query } from 'express-validator';
 import validateRequest from '../middleware/validateRequest.js';
 import {
     createReview, getAllReviews, getReview, updateReview, deleteReview,
+    getReviewsByUserId, getAverageRatingByUserId
 } from '../controllers/reviewController.js';
 import { protect, restrictTo } from '../controllers/authController.js';
 
@@ -31,7 +32,7 @@ router
 
     .post([ // Validation for creating a review
         restrictTo('provider'), // Only Providers can POST (create) reviews
-        body('contractId').notEmpty().isMongoId().withMessage('Valid Contract ID is required'),
+        body('contract').notEmpty().isMongoId().withMessage('Valid Contract ID is required'),
         body('rating').notEmpty().isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
         body('comment').optional({ checkFalsy: true }).trim().escape().isLength({ max: 1000 }),
     ], validateRequest, createReview); // Calls the controller to handle review creation
@@ -58,7 +59,7 @@ router
         body('rating').optional().isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
         body('comment').optional({ checkFalsy: true }).trim().escape().isLength({ max: 1000 }),
         // Prevent changing other fields
-        body('contractId').not().exists().withMessage('Cannot change contract ID'),
+        body('contract').not().exists().withMessage('Cannot change contract ID'),
         body('gig').not().exists(),
         body('reviewer').not().exists(),
         body('reviewee').not().exists(),
@@ -68,5 +69,19 @@ router
         restrictTo('provider', 'admin'), // Only provider or admin can DELETE reviews
         param('id').isMongoId().withMessage('Invalid Review ID format'), // Validate review ID
     ], validateRequest, deleteReview); // Calls the controller to delete the review
+
+// Add route to get reviews for a specific user
+router.get('/user/:userId',
+    param('userId').isMongoId().withMessage('Invalid User ID format'),
+    validateRequest,
+    getReviewsByUserId
+);
+
+// Add route to get average rating for a user
+router.get('/average/:userId',
+    param('userId').isMongoId().withMessage('Invalid User ID format'),
+    validateRequest,
+    getAverageRatingByUserId
+);
 
 export default router;

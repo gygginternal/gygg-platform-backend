@@ -118,7 +118,7 @@ const globalErrorHandler = (err, req, res, next) => {
   err.status = err.status || 'error';
 
   // Development: show full error details
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
     sendErrorDev(err, req, res);
 
   // Production: handle known errors, mask unknown ones

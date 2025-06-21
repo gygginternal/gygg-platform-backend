@@ -27,8 +27,21 @@ const upload = multer({
 
 // Utility function to check if the user is the owner of the post or has admin privileges
 const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
+  // Handle both ObjectId and populated user object cases
+  let resourceUserIdStr;
+  
+  if (typeof resourceUserId === 'object' && resourceUserId._id) {
+    // If it's a populated user object, use the _id
+    resourceUserIdStr = resourceUserId._id.toString();
+  } else {
+    // If it's an ObjectId, convert to string
+    resourceUserIdStr = resourceUserId.toString();
+  }
+  
+  const requestingUserIdStr = requestingUser.id.toString();
+  
   if (
-    resourceUserId.toString() !== requestingUser.id &&
+    resourceUserIdStr !== requestingUserIdStr &&
     !requestingUser.role.includes("admin")
   ) {
     throw new AppError(
@@ -404,9 +417,19 @@ export const deleteComment = catchAsync(async (req, res, next) => {
     return next(new AppError("Comment not found", 404)); // Handle if comment not found
   }
 
+  // Handle both ObjectId and populated user object cases for comment author
+  let commentAuthorIdStr;
+  if (typeof comment.author === 'object' && comment.author._id) {
+    // If it's a populated user object, use the _id
+    commentAuthorIdStr = comment.author._id.toString();
+  } else {
+    // If it's an ObjectId, convert to string
+    commentAuthorIdStr = comment.author.toString();
+  }
+
   // Check if the user is allowed to delete the comment (either the comment's author or an admin)
   if (
-    comment.user.toString() !== req.user.id &&
+    commentAuthorIdStr !== req.user.id.toString() &&
     !req.user.role.includes("admin")
   ) {
     return next(
@@ -415,7 +438,7 @@ export const deleteComment = catchAsync(async (req, res, next) => {
   }
 
   // Remove the comment from the post's comments array
-  comment.remove();
+  post.comments.pull(commentId);
   post.markModified('comments');
   await post.save(); // Save the post after removal
 

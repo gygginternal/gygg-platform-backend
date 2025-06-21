@@ -8,6 +8,7 @@ import {
   releasePaymentForContract,
   checkIfContractIsReleasable,
   getPayments,
+  getInvoicePdf,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -99,6 +100,16 @@ router.post(
   ],
   validateRequest,
   releasePaymentForContract
+);
+
+// Route to get PDF invoice for a payment
+router.get(
+  "/:paymentId/invoice-pdf",
+  [
+    param("paymentId").isMongoId().withMessage("Invalid Payment ID format"),
+  ],
+  validateRequest,
+  getInvoicePdf
 );
 
 export default router;

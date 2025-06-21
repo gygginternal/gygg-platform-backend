@@ -12,6 +12,20 @@ export const getNotifications = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', data: { notifications } });
 });
 
+// Get a specific notification by ID
+export const getNotification = catchAsync(async (req, res, next) => {
+  const notification = await Notification.findOne({ 
+    _id: req.params.id, 
+    user: req.user.id 
+  });
+  
+  if (!notification) {
+    return next(new AppError('Notification not found', 404));
+  }
+  
+  res.status(200).json({ status: 'success', data: { notification } });
+});
+
 // Mark a notification as read
 export const markAsRead = catchAsync(async (req, res, next) => {
   const notification = await Notification.findOneAndUpdate(

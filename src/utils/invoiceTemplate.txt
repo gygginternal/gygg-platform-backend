@@ -1,0 +1,26 @@
+-------------------------------------------------
+                    Invoice
+-------------------------------------------------
+
+Invoice ID:        {{paymentId}}
+Date:              {{date}}
+Gig:               {{gigTitle}}
+Contract ID:       {{contractId}}
+
+-------------------------------------------------
+Provider (Payer):
+  {{providerFirstName}} {{providerLastName}} ({{providerEmail}})
+
+Tasker (Payee):
+  {{taskerFirstName}} {{taskerLastName}} ({{taskerEmail}})
+
+-------------------------------------------------
+Payment Breakdown:
+  Total Amount:           ${{amount}} {{currency}}
+  Platform Fee (Provider):${{platformFee}} {{currency}}
+  Tax (13%):              ${{tax}} {{currency}}
+  Payout to Tasker:       ${{payout}} {{currency}}
+
+-------------------------------------------------
+Thank you for using our platform!
+------------------------------------------------- 

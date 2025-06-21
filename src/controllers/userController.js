@@ -237,15 +237,14 @@ export const uploadAlbumPhoto = catchAsync(async (req, res, next) => {
   res.status(201).json({ status: 'success', data: { photo: addedPhoto } });
 });
 
-// --- Controller: Get user album (own or another user's) ---
+// --- Controller: Get a user's album (public to logged-in users) ---
 export const getUserAlbum = catchAsync(async (req, res, next) => {
-  // Use userId from params if present, otherwise from req.user (if authenticated)
-  const userIdToFetch = req.params.userId || (req.user && req.user.id);
-  if (!mongoose.Types.ObjectId.isValid(userIdToFetch)) return next(new AppError('Invalid user ID format.', 400));
-  logger.debug(`getUserAlbum: Fetching album for user ID: ${userIdToFetch}`);
-  const userWithAlbum = await User.findById(userIdToFetch).select('album firstName lastName');
-  if (!userWithAlbum) return next(new AppError('User not found.', 404));
-  res.status(200).json({ status: 'success', results: userWithAlbum.album.length, data: { album: userWithAlbum.album, ownerName: `${userWithAlbum.firstName} ${userWithAlbum.lastName}`.trim() } });
+  const userId = req.params.userId || req.user.id;
+  logger.debug(`getUserAlbum: Fetching album for user ID: ${userId}`);
+  const user = await User.findById(userId).select('album firstName lastName profileImage');
+  if (!user) return next(new AppError('User not found.', 404));
+  // No restriction: any logged-in user can view another user's album
+  res.status(200).json({ status: 'success', data: { album: user.album, user: { firstName: user.firstName, lastName: user.lastName, profileImage: user.profileImage } } });
 });
 
 // --- Controller: Delete album photo (own photo only) ---

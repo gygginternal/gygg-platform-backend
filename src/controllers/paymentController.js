@@ -9,6 +9,9 @@ import Notification from '../models/Notification.js';
 import { Offer } from '../models/Offer.js';
 import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
+import PDFDocument from 'pdfkit';
+import { Readable } from 'stream';
+import { generateInvoicePdf } from '../utils/invoicePdf.js';
 
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -787,4 +790,46 @@ export const deletePayment = catchAsync(async (req, res, next) => {
   logger.warn(`Payment ${paymentId} and related data deleted by user ${req.user.id}`);
   await notifyAdmin('Payment deleted', { paymentId, deletedBy: req.user.id });
   res.status(204).json({ status: 'success', data: null });
+});
+
+// --- Generate PDF Invoice for Payment ---
+export const getInvoicePdf = catchAsync(async (req, res, next) => {
+  const { paymentId } = req.params;
+  const payment = await Payment.findById(paymentId)
+    .populate('payer', 'firstName lastName email')
+    .populate('payee', 'firstName lastName email')
+    .populate('contract')
+    .populate('gig', 'title');
+  if (!payment) return res.status(404).json({ status: 'fail', message: 'Payment not found' });
+
+  // Only payer, payee, or admin can access
+  if (![payment.payer._id.toString(), payment.payee._id.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
+    return res.status(403).json({ status: 'fail', message: 'You do not have permission to view this invoice.' });
+  }
+
+  try {
+    // Only set headers and stream PDF if all checks pass
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=invoice-${paymentId}.pdf`);
+    await generateInvoicePdf({
+      paymentId: payment._id,
+      date: payment.createdAt ? payment.createdAt.toISOString().slice(0, 10) : '',
+      gigTitle: payment.gig?.title || '',
+      contractId: payment.contract?._id || '',
+      providerFirstName: payment.payer.firstName,
+      providerLastName: payment.payer.lastName,
+      providerEmail: payment.payer.email,
+      taskerFirstName: payment.payee.firstName,
+      taskerLastName: payment.payee.lastName,
+      taskerEmail: payment.payee.email,
+      amount: (payment.amount / 100).toFixed(2),
+      currency: payment.currency || 'USD',
+      platformFee: (payment.applicationFeeAmount / 100).toFixed(2),
+      tax: (payment.taxAmount / 100).toFixed(2),
+      payout: (payment.amountAfterTax / 100).toFixed(2),
+    }, res);
+  } catch (err) {
+    logger.error('Failed to generate PDF invoice:', err);
+    return res.status(500).json({ status: 'fail', message: 'Failed to generate PDF invoice.' });
+  }
 });

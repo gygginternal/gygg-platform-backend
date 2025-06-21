@@ -13,22 +13,23 @@ dotenv.config({ path: './.env' });
  */
 const connectDB = async () => {
   try {
-    // Check if DATABASE_URL is defined in environment variables
-    if (!process.env.DATABASE_URL) {
-      logger.error('❌ FATAL ERROR: DATABASE_URL is not defined in the .env file.');
+    // Use MONGO_URI for tests, otherwise DATABASE_URL
+    const mongoUri = process.env.MONGO_URI || process.env.DATABASE_URL;
+    if (!mongoUri) {
+      logger.error('❌ FATAL ERROR: MONGO_URI or DATABASE_URL is not defined in the .env file.');
       process.exit(1); // Exit with failure
     }
 
     // Warn if using local MongoDB without a replica set (required for transactions)
     if (
-      process.env.DATABASE_URL.includes('localhost') &&
-      !process.env.DATABASE_URL.includes('replicaSet')
+      mongoUri.includes('localhost') &&
+      !mongoUri.includes('replicaSet')
     ) {
       logger.warn('⚠️ WARNING: Local MongoDB URL does not specify a replicaSet. Transactions may fail.');
     }
 
     // Attempt to connect to MongoDB
-    const conn = await mongoose.connect(process.env.DATABASE_URL);
+    const conn = await mongoose.connect(mongoUri);
     logger.info(`✅ MongoDB Connected: ${conn.connection.host}`);
 
     // Add listeners for connection-related events

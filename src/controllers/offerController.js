@@ -6,6 +6,7 @@ import AppError from "../utils/AppError.js";
 import Notification from '../models/Notification.js';
 import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
+import { Gig } from '../models/Gig.js';
 
 /**
  * Controller to accept an offer.
@@ -143,6 +144,12 @@ export const deleteOffer = catchAsync(async (req, res, next) => {
  */
 export const getOfferByApplication = catchAsync(async (req, res, next) => {
   const { gigId } = req.params; // Extract gig ID from route parameters
+
+  // Check if the gig exists
+  const gig = await Gig.findById(gigId);
+  if (!gig) {
+    return next(new AppError('No gig found with that ID', 404));
+  }
 
   // Find the offer for the given gig and populate the application field
   const offer = await Offer.findOne({ gig: gigId }).populate("provider");

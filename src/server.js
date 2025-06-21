@@ -4,7 +4,7 @@ dotenv.config({ path: "./.env" }); // Ensure all env variables are available fro
 
 // --- Core Imports ---
 import mongoose from "mongoose"; // Needed for DB connection and shutdown
-import app from "./app.js"; // Main Express app
+import app from './app.js'; // Main Express app
 import connectDB from "./config/db.js"; // MongoDB connection logic
 import logger from "./utils/logger.js"; // Custom logger (e.g., using Winston or Pino)
 import http from "http"; // Needed to create an HTTP server for WebSocket integration
@@ -25,7 +25,7 @@ process.on("uncaughtException", (err) => {
 connectDB(); // Automatically logs success/failure and handles exit on failure
 
 // --- Create HTTP Server ---
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 const server = http.createServer(app); // Use the Express app to create an HTTP server
 
 // --- Initialize Chat WebSocket Server ---
@@ -33,9 +33,11 @@ const chatWebsocket = initializeChatWebsocket(server);
 setChatWebsocket(chatWebsocket);
 
 // --- Start HTTP Server ---
-server.listen(port, () => {
-  logger.info(`🚀 Server is running on port ${port} [${process.env.NODE_ENV}]`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => {
+    logger.info(`🚀 Server is running on port ${PORT} [${process.env.NODE_ENV}]`);
+  });
+}
 
 // --- Handle Unhandled Promise Rejections ---
 process.on("unhandledRejection", (err) => {

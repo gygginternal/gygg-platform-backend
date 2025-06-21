@@ -7,7 +7,7 @@ import { parseJsonFields } from '../middleware/parseFormData.js'; // <<< IMPORT 
 import {
   signup, login, protect, restrictTo, updatePassword, logout,
   verifyEmail, resendVerificationEmail,
-//   forgotPassword, resetPassword // <<< Added Forgot/Reset
+  forgotPassword, resetPassword
 } from '../controllers/authController.js';
 
 // --- USER CONTROLLER FUNCTIONS ---
@@ -31,12 +31,15 @@ import { uploadS3 } from '../config/s3Config.js'; // Assuming this exists and is
 
 const router = express.Router();
 
-// --- PUBLIC PROFILE ROUTE (must be before any /:id or similar catch-all routes) ---
+// --- PUBLIC PROFILE ROUTE (ABSOLUTE FIRST) ---
 router.get('/public/:userId', [
   param('userId').isMongoId().withMessage('Invalid user ID format'),
   validateRequest,
   getPublicProfile
 ]);
+
+// --- Logout Route (PUBLIC, FIRST) ---
+router.post('/logout', logout);
 
 /**
  * ===============================
@@ -72,25 +75,15 @@ router.post('/login', loginValidation, validateRequest, login);
 router.get('/verifyEmail/:token', verifyEmail); // Token validated by controller
 
 // --- Forgot/Reset Password Routes ---
-// router.post('/forgotPassword', [
-//     body('email').isEmail().withMessage('Please provide a valid email.').normalizeEmail(),
-// ], validateRequest, forgotPassword);
+router.post('/forgotPassword', [
+    body('email').isEmail().withMessage('Please provide a valid email.').normalizeEmail(),
+], validateRequest, forgotPassword);
 
-// router.patch('/resetPassword/:token', [
-//     param('token').notEmpty().withMessage('Token is required.'), // Token from URL
-//     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters.'),
-//     body('passwordConfirm').custom((value, { req }) => { if (value !== req.body.password) throw new Error('New passwords do not match.'); return true; }),
-// ], validateRequest, resetPassword);
-
-// Route to view *another* user's public album (must be above router.use(protect))
-router.get('/users/:userId/album', (req, res, next) => {
-  delete req.headers.authorization;
-  next();
-}, [
-  param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
-  validateRequest,
-  getUserAlbum
-]);
+router.patch('/resetPassword/:token', [
+    param('token').notEmpty().withMessage('Token is required.'), // Token from URL
+    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters.'),
+    body('passwordConfirm').custom((value, { req }) => { if (value !== req.body.password) throw new Error('New passwords do not match.'); return true; }),
+], validateRequest, resetPassword);
 
 /**
  * ===============================
@@ -99,7 +92,17 @@ router.get('/users/:userId/album', (req, res, next) => {
  */
 router.use(protect); // All routes below require authentication
 
-router.get('/logout', logout); // Now protected
+/**
+ * ===============================
+ *         STRIPE ONBOARDING & DASHBOARD (Tasker only)
+ * ===============================
+ */
+router.post('/stripe/connect-account', restrictTo('tasker'), createStripeAccount);
+router.get('/stripe/account-link', restrictTo('tasker'), createStripeAccountLink);
+router.get('/stripe/account-status', restrictTo('tasker'), getStripeAccountStatus);
+// router.get('/stripe/dashboard-link', restrictTo('tasker'), getStripeLoginLink); // <<< Added route for Stripe Express Dashboard
+
+// --- Logout Route ---
 router.post('/resendVerificationEmail', resendVerificationEmail);
 
 const updatePasswordValidation = [
@@ -186,14 +189,16 @@ router.get('/top-match-taskers', protect, restrictTo('provider'), topMatchTasker
 
 /**
  * ===============================
- *         STRIPE ONBOARDING & DASHBOARD (Tasker only)
+ *         ALBUM VIEWING (Protected, not admin-only)
  * ===============================
  */
-router.post('/stripe/connect-account', restrictTo('tasker'), createStripeAccount);
-router.get('/stripe/account-link', restrictTo('tasker'), createStripeAccountLink);
-router.get('/stripe/account-status', restrictTo('tasker'), getStripeAccountStatus);
-// router.get('/stripe/dashboard-link', restrictTo('tasker'), getStripeLoginLink); // <<< Added route for Stripe Express Dashboard
-
+// Route to view another user's album (requires authentication, not admin-only)
+// This route is placed before admin restrictions to avoid conflicts
+router.get('/:userId/album', [
+  param('userId').isMongoId().withMessage('Invalid user ID format for album view'),
+  validateRequest,
+  getUserAlbum
+]);
 
 /**
  * ===============================

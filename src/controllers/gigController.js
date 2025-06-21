@@ -10,6 +10,9 @@ import Notification from '../models/Notification.js';
 import Payment from '../models/Payment.js';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import Post from '../models/Post.js';
+import { Offer } from '../models/Offer.js';
+import Review from '../models/Review.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,

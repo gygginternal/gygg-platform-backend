@@ -97,6 +97,7 @@ const verifyContractParty = async (contractId, userId) => {
 
 /**
  * Controller to send a message.
+ * Allows sending messages with or without a contract. If no contractId is provided, receiverId must be specified.
  * @param {object} req - The request object.
  * @param {object} res - The response object.
  * @param {function} next - The next middleware function.
@@ -174,6 +175,7 @@ export const sendMessage = catchAsync(async (req, res, next) => {
 
 /**
  * Controller to get the chat history.
+ * Allows fetching chat history by contractId or by userId (for direct messages).
  * @param {object} req - The request object.
  * @param {object} res - The response object.
  * @param {function} next - The next middleware function.

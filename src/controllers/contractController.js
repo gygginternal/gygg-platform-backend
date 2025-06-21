@@ -10,6 +10,7 @@ import Applicance from "../models/Applicance.js";
 import { Offer } from "../models/Offer.js";
 import Notification from '../models/Notification.js';
 import Review from '../models/Review.js';
+import notifyAdmin from '../utils/notifyAdmin.js';
 
 export const getMyContracts = catchAsync(async (req, res, next) => {
   const userId = req.user._id; // Get the logged-in user's ID
@@ -430,14 +431,42 @@ export const cancelContract = catchAsync(async (req, res, next) => {
   });
 });
 
+function getUserId(val) {
+  if (!val) return undefined;
+  if (typeof val === 'string') return val;
+  if (val._id) return val._id.toString();
+  if (val.id) return val.id.toString();
+  return val.toString();
+}
+
 export const deleteContract = catchAsync(async (req, res, next) => {
   const contractId = req.params.id;
   const contract = await Contract.findById(contractId);
   if (!contract) return next(new AppError('No contract found with that ID', 404));
-  // Only provider, tasker, or admin can delete
-  if (![contract.provider.toString(), contract.tasker.toString()].includes(req.user.id) && !req.user.role.includes('admin')) {
+
+  // Extract user IDs safely
+  const providerId = getUserId(contract.provider);
+  const taskerId = getUserId(contract.tasker);
+  const userId = req.user.id.toString();
+
+  // Debug: log user and contract IDs
+  console.log('[DEBUG] deleteContract:', {
+    userId,
+    providerId,
+    taskerId,
+    userRole: req.user.role
+  });
+
+  // Business rule: Once a tasker is assigned, only admins can delete the contract
+  if (taskerId && !req.user.role.includes('admin')) {
+    return next(new AppError('Cannot delete contract once a tasker has been assigned. Only administrators can delete assigned contracts.', 403));
+  }
+
+  // Only provider, tasker (if no tasker assigned), or admin can delete
+  if ([providerId, taskerId].indexOf(userId) === -1 && !req.user.role.includes('admin')) {
     return next(new AppError('You do not have permission to delete this contract.', 403));
   }
+
   // Cascade delete related records
   await Promise.all([
     Payment.deleteMany({ contract: contractId }),
