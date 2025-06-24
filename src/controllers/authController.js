@@ -105,7 +105,7 @@ const sendVerificationEmail = async (user, req) => {
 export const signup = catchAsync(async (req, res, next) => {
   try {
     const newUser = await User.create(req.body);
-    // Optionally, send verification email here
+    await sendVerificationEmail(newUser, req); // Send verification email after user creation
     // Generate JWT token
     const token = signToken(newUser._id);
     res.status(201).json({
@@ -259,10 +259,8 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 
   logger.info(`Email verified successfully for user ${user._id}`);
 
-  res.status(200).json({
-    status: "success",
-    message: "Email verified successfully! You can now log in.",
-  });
+  // Redirect to frontend login page after successful verification
+  return res.redirect(302, 'http://localhost:3000/login');
 });
 
 /**
