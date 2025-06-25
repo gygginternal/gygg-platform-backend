@@ -157,30 +157,24 @@ export const createPost = catchAsync(async (req, res, next) => {
     return next(new AppError("Content cannot be empty.", 400));
   }
 
-  // Handle image upload to S3
-  let mediaUrl = null;
+  // Handle image upload to S3 (using uploadS3 middleware for 'postImage')
+  let mediaUrls = [];
   if (req.file) {
-    const fileName = `posts/${uuidv4()}-${req.file.originalname}`;
-    const params = {
-      Bucket: process.env.AWS_S3_BUCKET_NAME, // Replace with your S3 bucket name
-      Key: fileName,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
-    };
-
-    try {
-      const uploadResult = await s3Client.send(new PutObjectCommand(params));
-      mediaUrl = uploadResult.Location; // Get the uploaded file's URL
-    } catch (error) {
-      return next(new AppError("Failed to upload image to S3.", 500));
-    }
+    // S3 URL is available as req.file.location (from multer-s3)
+    mediaUrls.push(req.file.location);
   }
 
   // Create a new post with the provided data
   const newPost = await Post.create({
     author: req.user.id,
     content: content.trim(),
-    media: mediaUrl, // Save the uploaded image URL
+    media: mediaUrls,
+  });
+
+  // Populate author fields for response
+  await newPost.populate({
+    path: 'author',
+    select: 'firstName lastName profileImage',
   });
 
   // Return the created post data

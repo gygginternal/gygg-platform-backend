@@ -15,6 +15,7 @@ import {
   deleteComment,
 } from "../controllers/postController.js";
 import { protect } from "../controllers/authController.js"; // Middleware to protect routes that require authentication
+import { uploadS3 } from '../config/s3Config.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() }); // Configure multer for file upload
@@ -55,7 +56,7 @@ router
  */
 router.post(
   "/",
-  upload.single("file"), // Middleware to handle single file upload
+  uploadS3.single("postImage"), // Use S3 for post image uploads
   [body("content").notEmpty().withMessage("Content cannot be empty").trim()],
   validateRequest,
   createPost
