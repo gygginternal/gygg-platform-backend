@@ -131,7 +131,8 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
     queryObj.$or = [
       { 'location.city': locationRegex },
       { 'location.state': locationRegex },
-      { 'location.country': locationRegex }
+      { 'location.country': locationRegex },
+      { 'location': locationRegex }
     ];
     logger.debug(`getAllGigs: Filtering by location: "${req.query.location}"`);
   }
