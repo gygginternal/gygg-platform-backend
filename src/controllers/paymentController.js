@@ -833,3 +833,124 @@ export const getInvoicePdf = catchAsync(async (req, res, next) => {
     return res.status(500).json({ status: 'fail', message: 'Failed to generate PDF invoice.' });
   }
 });
+
+// --- Get Available Balance for Withdrawal ---
+export const getBalance = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+
+  // Get user with Stripe account ID
+  const user = await User.findById(userId).select("+stripeAccountId");
+  if (!user || !user.stripeAccountId) {
+    return next(new AppError("Stripe account not connected. Please complete onboarding first.", 400));
+  }
+
+  try {
+    // Retrieve the available balance from Stripe
+    const balance = await stripe.balance.retrieve({
+      stripeAccount: user.stripeAccountId,
+    });
+
+    // Find available balance for USD (or default currency)
+    const available = balance.available.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
+    const pending = balance.pending.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        available: (available.amount / 100).toFixed(2),
+        pending: (pending.amount / 100).toFixed(2),
+        currency: available.currency.toUpperCase(),
+        stripeAccountId: user.stripeAccountId,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error retrieving balance for user ${userId}:`, error);
+    return next(new AppError("Failed to retrieve balance from Stripe.", 500));
+  }
+});
+
+// --- Process Withdrawal Request ---
+export const processWithdrawal = catchAsync(async (req, res, next) => {
+  const { amount } = req.body;
+  const userId = req.user.id;
+
+  // Validate amount
+  if (!amount || amount <= 0) {
+    return next(new AppError("Valid withdrawal amount is required.", 400));
+  }
+
+  // Get user with Stripe account ID
+  const user = await User.findById(userId).select("+stripeAccountId");
+  if (!user || !user.stripeAccountId) {
+    return next(new AppError("Stripe account not connected. Please complete onboarding first.", 400));
+  }
+
+  try {
+    // Check available balance first
+    const balance = await stripe.balance.retrieve({
+      stripeAccount: user.stripeAccountId,
+    });
+
+    const available = balance.available.find(b => b.currency === 'usd');
+    const availableAmount = available ? available.amount : 0;
+    const requestedAmount = Math.round(amount * 100); // Convert to cents
+
+    if (requestedAmount > availableAmount) {
+      return next(new AppError(`Insufficient balance. Available: $${(availableAmount / 100).toFixed(2)}, Requested: $${amount}`, 400));
+    }
+
+    // Create payout to user's connected bank account
+    const payout = await stripe.payouts.create({
+      amount: requestedAmount,
+      currency: 'usd',
+      method: 'instant', // Use instant payout if available, otherwise standard
+    }, {
+      stripeAccount: user.stripeAccountId,
+    });
+
+    // Log the withdrawal for tracking
+    logger.info(`Withdrawal processed for user ${userId}: $${amount} (Payout ID: ${payout.id})`);
+
+    // Create a withdrawal record in the database (optional)
+    const withdrawalRecord = new Payment({
+      payer: userId, // User withdrawing
+      payee: userId, // User receiving
+      amount: requestedAmount,
+      currency: 'usd',
+      status: payout.status,
+      stripePayoutId: payout.id,
+      description: `Withdrawal to bank account`,
+      type: 'withdrawal',
+    });
+    await withdrawalRecord.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Withdrawal request submitted successfully",
+      data: {
+        payoutId: payout.id,
+        amount: amount,
+        status: payout.status,
+        estimatedArrival: payout.arrival_date ? new Date(payout.arrival_date * 1000) : null,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error processing withdrawal for user ${userId}:`, error);
+    
+    // Handle specific Stripe errors
+    if (error.type === 'StripeError') {
+      switch (error.code) {
+        case 'insufficient_funds':
+          return next(new AppError("Insufficient funds in your Stripe account.", 400));
+        case 'account_invalid':
+          return next(new AppError("Your Stripe account is not properly configured.", 400));
+        case 'payout_not_allowed':
+          return next(new AppError("Payouts are not enabled for your account.", 400));
+        default:
+          return next(new AppError(`Stripe error: ${error.message}`, 400));
+      }
+    }
+    
+    return next(new AppError("Failed to process withdrawal request.", 500));
+  }
+});

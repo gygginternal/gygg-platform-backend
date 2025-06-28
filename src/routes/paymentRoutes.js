@@ -1,5 +1,5 @@
 import express from "express";
-import { param } from "express-validator";
+import { param, body } from "express-validator";
 import validateRequest from "../middleware/validateRequest.js";
 import {
   createPaymentIntentForContract,
@@ -9,6 +9,8 @@ import {
   checkIfContractIsReleasable,
   getPayments,
   getInvoicePdf,
+  getBalance,
+  processWithdrawal,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -29,6 +31,29 @@ router.get(
   ],
   validateRequest,
   getPayments // Calls the controller to handle payment retrieval
+);
+
+// Route to get available balance for withdrawal
+router.get(
+  "/balance",
+  [
+    restrictTo("tasker"), // Only taskers can check their balance
+  ],
+  validateRequest,
+  getBalance
+);
+
+// Route to process withdrawal request
+router.post(
+  "/withdraw",
+  [
+    restrictTo("tasker"), // Only taskers can withdraw
+    body("amount")
+      .isFloat({ min: 0.01 })
+      .withMessage("Valid withdrawal amount (minimum $0.01) is required"),
+  ],
+  validateRequest,
+  processWithdrawal
 );
 
 /**

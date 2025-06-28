@@ -105,4 +105,128 @@ describe('Invoice PDF Endpoint', () => {
       .set('Authorization', `Bearer ${providerToken}`);
     expect(res.statusCode).toBe(404);
   });
+});
+
+describe('Withdrawal Endpoints', () => {
+  beforeEach(async () => {
+    // Add Stripe account ID to tasker for withdrawal tests
+    tasker.stripeAccountId = 'acct_test_tasker';
+    await tasker.save();
+  });
+
+  describe('GET /api/v1/payments/balance', () => {
+    it('should allow tasker to get balance', async () => {
+      // Mock the Stripe balance response
+      const mockBalance = {
+        available: [{ amount: 5000, currency: 'usd' }],
+        pending: [{ amount: 1000, currency: 'usd' }]
+      };
+
+      // Mock the stripe.balance.retrieve method
+      const { stripe } = await import('../src/controllers/paymentController.js');
+      const originalRetrieve = stripe.balance.retrieve;
+      stripe.balance.retrieve = jest.fn().mockResolvedValue(mockBalance);
+
+      try {
+        const res = await request(app)
+          .get('/api/v1/payments/balance')
+          .set('Authorization', `Bearer ${taskerToken}`)
+          .expect(200);
+        
+        expect(res.body.status).toBe('success');
+        expect(res.body.data).toHaveProperty('available');
+        expect(res.body.data).toHaveProperty('pending');
+        expect(res.body.data).toHaveProperty('currency');
+      } finally {
+        // Restore original method
+        stripe.balance.retrieve = originalRetrieve;
+      }
+    });
+
+    it('should not allow provider to get balance', async () => {
+      const res = await request(app)
+        .get('/api/v1/payments/balance')
+        .set('Authorization', `Bearer ${providerToken}`);
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('should return 400 if user has no Stripe account', async () => {
+      // Remove Stripe account from tasker
+      tasker.stripeAccountId = undefined;
+      await tasker.save();
+
+      const res = await request(app)
+        .get('/api/v1/payments/balance')
+        .set('Authorization', `Bearer ${taskerToken}`);
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST /api/v1/payments/withdraw', () => {
+    it('should allow tasker to withdraw valid amount', async () => {
+      // Mock Stripe responses
+      const mockBalance = {
+        available: [{ amount: 10000, currency: 'usd' }] // $100 available
+      };
+      const mockPayout = {
+        id: 'po_test_123',
+        status: 'pending',
+        amount: 5000, // $50.00 in cents
+        arrival_date: Math.floor(Date.now() / 1000) + 86400 // 24 hours from now
+      };
+
+      // Mock the stripe methods
+      const { stripe } = await import('../src/controllers/paymentController.js');
+      const originalBalanceRetrieve = stripe.balance.retrieve;
+      const originalPayoutsCreate = stripe.payouts.create;
+
+      stripe.balance.retrieve = jest.fn().mockResolvedValue(mockBalance);
+      stripe.payouts.create = jest.fn().mockResolvedValue(mockPayout);
+
+      try {
+        const res = await request(app)
+          .post('/api/v1/payments/withdraw')
+          .set('Authorization', `Bearer ${taskerToken}`)
+          .send({ amount: 50.00 })
+          .expect(200);
+        
+        expect(res.body.status).toBe('success');
+        expect(res.body.data).toHaveProperty('payoutId');
+        expect(res.body.data).toHaveProperty('amount', 50.00);
+        expect(res.body.data).toHaveProperty('status');
+      } finally {
+        // Restore original methods
+        stripe.balance.retrieve = originalBalanceRetrieve;
+        stripe.payouts.create = originalPayoutsCreate;
+      }
+    });
+
+    it('should not allow provider to withdraw', async () => {
+      const res = await request(app)
+        .post('/api/v1/payments/withdraw')
+        .set('Authorization', `Bearer ${providerToken}`)
+        .send({ amount: 50.00 });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('should validate withdrawal amount', async () => {
+      const res = await request(app)
+        .post('/api/v1/payments/withdraw')
+        .set('Authorization', `Bearer ${taskerToken}`)
+        .send({ amount: 0 });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('should return 400 if user has no Stripe account', async () => {
+      // Remove Stripe account from tasker
+      tasker.stripeAccountId = undefined;
+      await tasker.save();
+
+      const res = await request(app)
+        .post('/api/v1/payments/withdraw')
+        .set('Authorization', `Bearer ${taskerToken}`)
+        .send({ amount: 50.00 });
+      expect(res.statusCode).toBe(400);
+    });
+  });
 }); 

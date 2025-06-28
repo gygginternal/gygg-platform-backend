@@ -3,22 +3,23 @@ import mongoose from "mongoose";
 // Define the payment schema
 const paymentSchema = new mongoose.Schema(
   {
-    // Contract related to the payment
+    // Contract related to the payment (optional for withdrawals)
     contract: {
       type: mongoose.Schema.ObjectId,
       ref: "Contract",
-      required: [true, "A payment must be linked to a contract."],
+      required: function() { return this.type !== 'withdrawal'; },
       unique: true,
+      sparse: true, // Allow null values for withdrawals
     },
 
-    // Gig related to the payment
+    // Gig related to the payment (optional for withdrawals)
     gig: {
       type: mongoose.Schema.ObjectId,
       ref: "Gig",
-      required: [true, "Payment must be linked to a gig."],
+      required: function() { return this.type !== 'withdrawal'; },
     },
 
-    // Payer: Provider making the payment
+    // Payer: Provider making the payment or user withdrawing
     payer: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
@@ -26,12 +27,26 @@ const paymentSchema = new mongoose.Schema(
       index: true, // Index to search quickly by payer
     },
 
-    // Payee: Tasker receiving the payment
+    // Payee: Tasker receiving the payment or user receiving withdrawal
     payee: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
       required: [true, "A payment must have a payee."],
       index: true, // Index to search quickly by payee
+    },
+
+    // Payment type: 'payment' (default) or 'withdrawal'
+    type: {
+      type: String,
+      enum: ['payment', 'withdrawal'],
+      default: 'payment',
+      required: true,
+    },
+
+    // Description for the payment/withdrawal
+    description: {
+      type: String,
+      default: 'Payment for services',
     },
 
     // Total payment amount (in cents)
@@ -40,11 +55,11 @@ const paymentSchema = new mongoose.Schema(
       required: [true, "Payment amount is required."],
     },
 
-    // Currency used for the payment (defaults to 'CAD')
+    // Currency used for the payment (defaults to 'USD')
     currency: {
       type: String,
       required: true,
-      default: "cad",
+      default: "usd",
     },
 
     // Platform's application fee in cents
@@ -142,29 +157,39 @@ const paymentSchema = new mongoose.Schema(
 
 // Pre-save hook to calculate fees and update timestamps when the payment is saved
 paymentSchema.pre("save", async function (next) {
-  // Only the provider pays the platform fee (fixed + percent) and tax when posting a gig
-  // The tasker only pays the tax when withdrawing money (handled at payout, not here)
-  if (this.isModified("amount") || this.isNew) {
-    // Use environment variables for fee/tax configuration
-    // PLATFORM_FIXED_FEE_CENTS (default 500 = $5), PLATFORM_FEE_PERCENT (default 0.10 = 10%), TAX_PERCENT (default 0.13 = 13%)
-    const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
-    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
-    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
-    // Calculate tax on the total amount
-    this.taxAmount = Math.round(this.amount * taxPercent);
-    // Amount after tax (what goes to escrow)
-    this.amountAfterTax = this.amount - this.taxAmount;
-    // Platform fee is only paid by provider when posting a gig
-    this.applicationFeeAmount = Math.round(this.amountAfterTax * feePercentage) + fixedFeeCents;
-    // Amount received by Tasker (after platform fee and tax)
-    this.amountReceivedByPayee = Math.max(0, this.amountAfterTax - this.applicationFeeAmount);
-    // Optional: Log a warning if fee exceeds amount significantly
-    if (this.applicationFeeAmount >= this.amountAfterTax) {
-      console.warn(
-        `WARNING: Calculated applicationFeeAmount (${this.applicationFeeAmount}) meets or exceeds total after-tax amount (${this.amountAfterTax}) for Payment ${this._id}`
-      );
+  // Handle withdrawals differently from regular payments
+  if (this.type === 'withdrawal') {
+    // For withdrawals, set the same values as the amount (no fees/taxes for withdrawals)
+    this.amountReceivedByPayee = this.amount;
+    this.amountAfterTax = this.amount;
+    this.taxAmount = 0;
+    this.applicationFeeAmount = 0;
+  } else {
+    // Only the provider pays the platform fee (fixed + percent) and tax when posting a gig
+    // The tasker only pays the tax when withdrawing money (handled at payout, not here)
+    if (this.isModified("amount") || this.isNew) {
+      // Use environment variables for fee/tax configuration
+      // PLATFORM_FIXED_FEE_CENTS (default 500 = $5), PLATFORM_FEE_PERCENT (default 0.10 = 10%), TAX_PERCENT (default 0.13 = 13%)
+      const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
+      const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
+      const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
+      // Calculate tax on the total amount
+      this.taxAmount = Math.round(this.amount * taxPercent);
+      // Amount after tax (what goes to escrow)
+      this.amountAfterTax = this.amount - this.taxAmount;
+      // Platform fee is only paid by provider when posting a gig
+      this.applicationFeeAmount = Math.round(this.amountAfterTax * feePercentage) + fixedFeeCents;
+      // Amount received by Tasker (after platform fee and tax)
+      this.amountReceivedByPayee = Math.max(0, this.amountAfterTax - this.applicationFeeAmount);
+      // Optional: Log a warning if fee exceeds amount significantly
+      if (this.applicationFeeAmount >= this.amountAfterTax) {
+        console.warn(
+          `WARNING: Calculated applicationFeeAmount (${this.applicationFeeAmount}) meets or exceeds total after-tax amount (${this.amountAfterTax}) for Payment ${this._id}`
+        );
+      }
     }
   }
+  
   // Update timestamps for successful or refunded payment status
   if (this.isModified("status")) {
     if (this.status === "succeeded" && !this.succeededAt) {
