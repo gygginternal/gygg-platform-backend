@@ -90,6 +90,7 @@ router.patch('/resetPassword/:token', [
  *      PROTECTED ROUTES START HERE
  * ===============================
  */
+router.post('/resendVerificationEmail', resendVerificationEmail);
 router.use(protect); // All routes below require authentication
 
 /**
@@ -101,9 +102,6 @@ router.post('/stripe/connect-account', restrictTo('tasker'), createStripeAccount
 router.get('/stripe/account-link', restrictTo('tasker'), createStripeAccountLink);
 router.get('/stripe/account-status', restrictTo('tasker'), getStripeAccountStatus);
 // router.get('/stripe/dashboard-link', restrictTo('tasker'), getStripeLoginLink); // <<< Added route for Stripe Express Dashboard
-
-// --- Logout Route ---
-router.post('/resendVerificationEmail', resendVerificationEmail);
 
 const updatePasswordValidation = [
     body('passwordCurrent').notEmpty().withMessage('Current password is required'),

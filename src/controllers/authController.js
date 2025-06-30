@@ -264,25 +264,26 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Resends the email verification token to the user.
- * @route POST /api/v1/users/resendVerification
+ * Resends the email verification token to the user (no login required).
+ * @route POST /api/v1/users/resendVerificationEmail
  */
 export const resendVerificationEmail = catchAsync(async (req, res, next) => {
-  const user = await User.findById(req.user.id);
-
+  const { email } = req.body;
+  if (!email) {
+    return next(new AppError('Please provide your email address.', 400));
+  }
+  const user = await User.findOne({ email });
   if (!user) {
-    return next(new AppError("User not found.", 404));
+    // For security, do not reveal if user exists
+    return res.status(200).json({ status: 'success', message: 'If that email exists, a verification link has been sent.' });
   }
-
   if (user.isEmailVerified) {
-    return next(new AppError("Your email is already verified.", 400));
+    return next(new AppError('Your email is already verified.', 400));
   }
-
   await sendVerificationEmail(user, req);
-
   res.status(200).json({
-    status: "success",
-    message: "Verification email resent. Please check your inbox.",
+    status: 'success',
+    message: 'Verification email resent. Please check your inbox.',
   });
 });
 

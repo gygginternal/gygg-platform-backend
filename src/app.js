@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config({ path: './.env.test' });
+dotenv.config({ path: './.env' });
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -34,7 +34,11 @@ const app = express();
 // --- Security Middleware ---
 app.use(helmet()); // Set security HTTP headers
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:3001'
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '10kb' })); // Body parser, reading data from body into req.body
