@@ -4,7 +4,7 @@ const offerSchema = new mongoose.Schema(
   {
     application: {
       type: mongoose.Schema.ObjectId,
-      ref: "Applicance",
+      ref: "Application",
       required: true,
     },
     gig: {

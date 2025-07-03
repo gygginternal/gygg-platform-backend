@@ -6,7 +6,7 @@ import User from "../models/User.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
-import Applicance from "../models/Applicance.js";
+import Application from "../models/Application.js";
 import { Offer } from "../models/Offer.js";
 import Notification from '../models/Notification.js';
 import Review from '../models/Review.js';
@@ -21,7 +21,7 @@ export const getMyContracts = catchAsync(async (req, res, next) => {
   const skip = (page - 1) * limit;
 
   // Filters
-  const { name, status } = req.query;
+  const { name, status, category, minCost, maxCost } = req.query;
 
   // Build the query object
   const query = {
@@ -36,9 +36,19 @@ export const getMyContracts = catchAsync(async (req, res, next) => {
   // Add filters for status (accepts an array or a single value)
   if (status) {
     const statusArray = Array.isArray(status) ? status : [status];
-    console.log({ statusArray });
+    query["status"] = { $in: statusArray };
+  }
 
-    query["status"] = { $in: statusArray }; // Match any of the provided statuses
+  // Add filter for gig category
+  if (category && category !== "All") {
+    query["gig.category"] = category;
+  }
+
+  // Add filter for price range (agreedCost)
+  if (minCost || maxCost) {
+    query["agreedCost"] = {};
+    if (minCost) query["agreedCost"].$gte = parseFloat(minCost);
+    if (maxCost) query["agreedCost"].$lte = parseFloat(maxCost);
   }
 
   // Fetch contracts where the user is either the provider or the tasker

@@ -17,7 +17,7 @@ import {
 import { protect, restrictTo } from "../controllers/authController.js"; // Auth middlewares to secure and authorize access
 import {
   listGigApplications,
-} from "../controllers/applicanceController.js";
+} from "../controllers/applicationController.js";
 import { topMatchGigs } from "../controllers/taskersController.js";
 import { getOfferByApplication } from "../controllers/offerController.js"; // Import the controller
 
@@ -222,6 +222,15 @@ router.get(
   ],
   validateRequest,
   listGigApplications // Calls the controller to list applications
+);
+
+// Add POST route for applying to a gig
+router.post(
+  "/:gigId/applications",
+  restrictTo("tasker"),
+  param("gigId").isMongoId().withMessage("Invalid Gig ID format"),
+  validateRequest,
+  applyToGig // Calls the controller to handle the application
 );
 
 router.get(

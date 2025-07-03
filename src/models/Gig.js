@@ -65,8 +65,17 @@ const gigSchema = new mongoose.Schema(
     },
     cost: {
       type: Number,
-      required: [true, "A gig must have a cost"],
       min: [0, "Cost cannot be negative"],
+      required: function() { return !this.isHourly; },
+    },
+    ratePerHour: {
+      type: Number,
+      min: [0, "Hourly rate cannot be negative"],
+      required: function() { return this.isHourly; },
+    },
+    isHourly: {
+      type: Boolean,
+      default: false,
     },
     location: {
       address: String,

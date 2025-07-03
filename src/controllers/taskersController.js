@@ -169,6 +169,7 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
   logger.info(
     `topMatchGigs: Found ${matchedGigs.length} gigs for tasker ${taskerId}.`
   );
+  logger.info('Matched gigs returned:', matchedGigs.map(g => g._id));
 
   res.status(200).json({
     status: "success",

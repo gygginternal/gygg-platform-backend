@@ -5,7 +5,7 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import User from "../models/User.js"; // Imported for matchGigsForTasker
-import Applicance from "../models/Applicance.js"; // Assuming Applicance is the model for applications
+import Application from "../models/Application.js"; // Assuming Application is the model for applications
 import Notification from '../models/Notification.js';
 import Payment from '../models/Payment.js';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
@@ -45,7 +45,7 @@ export const getMyApplicationForGig = catchAsync(async (req, res, next) => {
   const userId = req.user._id; // Get the logged-in user's ID
 
   // Find the user's application for the specified gig
-  const application = await Applicance.findOne({
+  const application = await Application.findOne({
     gig: gigId,
     user: userId,
   }).populate("gig");
@@ -156,54 +156,37 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
 
   // --- Handle Status Filter ---
   if (!queryObj.status) {
-    queryObj.status = "open"; // Default to showing only open gigs
+    queryObj.status = "open";
   }
 
-  logger.debug(
-    "getAllGigs: Final query object (excluding sort/page/limit/fields):",
-    queryObj
-  );
-  let query = Gig.find(queryObj, projection);
-
-  // --- Sorting ---
-  if (req.query.sort) {
-    const sortBy = req.query.sort.split(",").join(" ");
-    sortOptions = sortBy;
-    logger.debug(`getAllGigs: Applying custom sort: "${sortBy}"`);
-  }
-  query = query.sort(sortOptions);
-
-  // --- Field Limiting ---
-  if (req.query.fields) {
-    const fields = req.query.fields.split(",").join(" ");
-    query = query.select(fields);
-  } else {
-    query = query.select("-__v");
+  // Only show gigs where provider has payment method and gig is paid
+  let gigs = await Gig.find(queryObj);
+  const filteredGigs = [];
+  for (const gig of gigs) {
+    // Check provider payment method
+    const provider = gig.postedBy;
+    if (!provider.stripeAccountId || provider.stripeChargesEnabled === false) {
+      continue;
+    }
+    // Check for successful payment for this gig
+    const payment = await Payment.findOne({ gig: gig._id, status: 'succeeded' });
+    if (!payment) {
+      continue;
+    }
+    filteredGigs.push(gig);
   }
 
-  // --- Pagination ---
+  // Pagination (after filtering)
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const skip = (page - 1) * limit;
-  query = query.skip(skip).limit(limit);
-
-  // --- Execute Query ---
-  const gigs = await query;
-
-  // Get total count for pagination metadata
-  const totalGigs = await Gig.countDocuments(queryObj);
-
-  logger.info(
-    `getAllGigs: Found ${gigs.length} gigs for page ${page} (Total matching: ${totalGigs})`
-  );
+  const paginatedGigs = filteredGigs.slice(skip, skip + limit);
 
   res.status(200).json({
-    status: "success",
-    results: gigs.length,
-    total: totalGigs,
-    page: page,
-    totalPages: Math.ceil(totalGigs / limit),
-    data: { gigs },
+    status: 'success',
+    results: paginatedGigs.length,
+    data: paginatedGigs,
+    total: filteredGigs.length,
   });
 });
 
@@ -356,7 +339,7 @@ export const deleteGig = catchAsync(async (req, res, next) => {
     Contract.deleteMany({ gig: gigId }),
     Payment.deleteMany({ gig: gigId }),
     Offer.deleteMany({ gig: gigId }),
-    Applicance.deleteMany({ gig: gigId }),
+    Application.deleteMany({ gig: gigId }),
     Review.deleteMany({ gig: gigId }),
     Notification.deleteMany({ 'data.gigId': gigId }),
     Post.deleteMany({ 'data.gigId': gigId }),
@@ -370,26 +353,28 @@ export const deleteGig = catchAsync(async (req, res, next) => {
 });
 
 // Helper to send notification
-async function sendNotification({ user, type, message, data }) {
+async function sendNotification({ user, type, message, data, icon }) {
   try {
-    await Notification.create({ user, type, message, data });
+    await Notification.create({ user, type, message, data, icon });
   } catch (err) {
-    logger.error('Failed to send notification', { user, type, message, data, err });
+    logger.error('Failed to send notification', { user, type, message, data, icon, err });
   }
 }
 
 // --- Handler: User applies to a gig (application creation) ---
 export const applyToGig = catchAsync(async (req, res, next) => {
-  const { gigId } = req.body;
+  const { gigId } = req.params;
   const userId = req.user._id;
+  console.log('applyToGig: gigId param:', gigId, typeof gigId);
   const gig = await Gig.findById(gigId);
+  console.log('applyToGig: gig found:', gig);
   if (!gig) return next(new AppError('Gig not found', 404));
 
   // Check if already applied
-  const existing = await Applicance.findOne({ gig: gigId, user: userId });
+  const existing = await Application.findOne({ gig: gigId, user: userId });
   if (existing) return next(new AppError('Already applied to this gig', 400));
 
-  const application = await Applicance.create({ gig: gigId, user: userId, status: 'pending' });
+  const application = await Application.create({ gig: gigId, user: userId, status: 'pending' });
 
   // Notify provider
   if (gig.postedBy.toString() !== userId.toString()) {
@@ -398,6 +383,7 @@ export const applyToGig = catchAsync(async (req, res, next) => {
       type: 'gig_application',
       message: `${req.user.firstName} applied to your gig: ${gig.title}`,
       data: { gigId: gig._id, applicationId: application._id },
+      icon: 'applied-user',
     });
   }
 
@@ -657,7 +643,7 @@ export const getMyGigsWithNoApplications = catchAsync(
       },
       {
         $lookup: {
-          from: "applicances", // Lookup applications for the gig
+          from: "applications", // Lookup applications for the gig
           localField: "_id",
           foreignField: "gig",
           as: "applications",
@@ -667,11 +653,8 @@ export const getMyGigsWithNoApplications = catchAsync(
         $sort: { createdAt: -1 }, // Sort by creation date (most recent first)
       },
       {
-        $limit: 3, // Limit to 3 gigs
-      },
-      {
         $project: {
-          id: "$_id", // Use MongoDB's _id as the id
+          _id: "$_id", // Use MongoDB's _id as the _id
           title: 1,
           category: 1,
           cost: 1,

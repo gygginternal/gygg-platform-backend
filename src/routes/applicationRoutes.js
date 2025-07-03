@@ -3,31 +3,30 @@ import { body, param } from "express-validator";
 import validateRequest from "../middleware/validateRequest.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 import {
-  rejectApplicance,
+  rejectApplication,
   offerApplication,
-  cancelApplicance,
-  topMatchApplicances,
+  cancelApplication,
+  topMatchApplications,
   createOffer, // Import createOffer controller
-} from "../controllers/applicanceController.js";
+  getMyAppliedGigs,
+} from "../controllers/applicationController.js";
 
 const router = express.Router();
 
-/**
- * --- Protect Routes ---
- * All routes below this middleware require the user to be logged in.
- */
+// --- Protect Routes ---
+// All routes below this middleware require the user to be logged in.
 router.use(protect); // Protect all routes below this middleware (user must be logged in)
 
-// Route to mark an applicance as rejected
+// Route to mark an application as rejected
 router.patch(
-  "/:applicanceId/reject",
+  "/:applicationId/reject",
   [
-    param("applicanceId")
+    param("applicationId")
       .isMongoId()
-      .withMessage("Invalid Applicance ID format"), // Validate applicance ID
+      .withMessage("Invalid Application ID format"), // Validate application ID
   ],
   validateRequest,
-  rejectApplicance // Calls the controller to handle rejection
+  rejectApplication // Calls the controller to handle rejection
 );
 
 // Route to create an offer for an application
@@ -45,26 +44,29 @@ router.post(
 
 // Route to cancel an application
 router.patch(
-  "/:applicanceId/cancel",
+  "/:applicationId/cancel",
   [
     restrictTo("tasker"), // Only taskers can cancel their applications
-    param("applicanceId")
+    param("applicationId")
       .isMongoId()
-      .withMessage("Invalid Applicance ID format"), // Validate applicance ID
+      .withMessage("Invalid Application ID format"), // Validate application ID
   ],
   validateRequest,
-  cancelApplicance // Calls the controller to handle cancellation
+  cancelApplication // Calls the controller to handle cancellation
 );
 
-// --- Route: Get Top Matching Appliances ---
-// @route   GET /api/v1/applicances/top-match
+// --- Route: Get Top Matching Applications ---
+// @route   GET /api/v1/applications/top-match
 // @desc    Get the top matching applications for the logged-in user
 // @access  Private (only accessible to users)
 router.get(
   "/top-match",
   protect,
   restrictTo("provider", "tasker"),
-  topMatchApplicances
+  topMatchApplications
 );
 
-export default router;
+// Add route for tasker to get gigs they've applied to
+router.get('/my-gigs', getMyAppliedGigs);
+
+export default router; 

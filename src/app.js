@@ -21,7 +21,7 @@ import chatRouter from "./routes/chatRoutes.js";
 import paymentRouter from "./routes/paymentRoutes.js";
 import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
-import applicanceRouter from "./routes/applicanceRoutes.js";
+import applicationRouter from "./routes/applicationRoutes.js";
 import offerRouter from "./routes/offerRoutes.js";
 import notificationRoutes from './routes/notificationRoutes.js';
 
@@ -70,7 +70,7 @@ app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/payments", paymentRouter);
 app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
-app.use("/api/v1/applicances", applicanceRouter);
+app.use("/api/v1/applications", applicationRouter);
 app.use("/api/v1/offers", offerRouter);
 app.use('/api/v1/notifications', notificationRoutes);
 

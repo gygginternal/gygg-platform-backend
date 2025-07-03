@@ -11,7 +11,7 @@ import ChatMessage from '../models/ChatMessage.js';
 import Contract from '../models/Contract.js';
 import Payment from '../models/Payment.js';
 import { Offer } from '../models/Offer.js';
-import Applicance from '../models/Applicance.js';
+import Application from '../models/Application.js';
 import Review from '../models/Review.js';
 import Notification from '../models/Notification.js';
 
@@ -199,7 +199,7 @@ export const deleteMe = catchAsync(async (req, res, next) => {
     Contract.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
     Payment.deleteMany({ $or: [{ payer: user._id }, { payee: user._id }] }),
     Offer.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
-    Applicance.deleteMany({ user: user._id }),
+    Application.deleteMany({ user: user._id }),
     Review.deleteMany({ $or: [{ reviewer: user._id }, { reviewee: user._id }] }),
     Notification.deleteMany({ user: user._id }),
   ]);
