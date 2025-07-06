@@ -17,6 +17,19 @@ const router = express.Router();
 // All routes below this middleware require the user to be logged in.
 router.use(protect); // Protect all routes below this middleware (user must be logged in)
 
+// Route to accept an application
+router.patch(
+  "/:applicationId/accept",
+  [
+    restrictTo("provider"), // Only providers can accept applications
+    param("applicationId")
+      .isMongoId()
+      .withMessage("Invalid Application ID format"), // Validate application ID
+  ],
+  validateRequest,
+  offerApplication // Calls the controller to handle acceptance
+);
+
 // Route to mark an application as rejected
 router.patch(
   "/:applicationId/reject",

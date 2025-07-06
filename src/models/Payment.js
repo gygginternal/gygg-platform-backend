@@ -167,7 +167,7 @@ paymentSchema.pre("save", async function (next) {
   } else {
     // Only the provider pays the platform fee (fixed + percent) and tax when posting a gig
     // The tasker only pays the tax when withdrawing money (handled at payout, not here)
-    if (this.isModified("amount") || this.isNew) {
+    if ((this.isModified("amount") || this.isNew) && (this.taxAmount === 0 || this.taxAmount === undefined)) {
       // Use environment variables for fee/tax configuration
       // PLATFORM_FIXED_FEE_CENTS (default 500 = $5), PLATFORM_FEE_PERCENT (default 0.10 = 10%), TAX_PERCENT (default 0.13 = 13%)
       const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents

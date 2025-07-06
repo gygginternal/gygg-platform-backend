@@ -72,12 +72,23 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
   // Format the response to match the desired structure
   const formattedApplications = applications.map((application) => {
     const user = application.user;
+    
+    // Safely format location with null checks
+    let location = "Location not specified";
+    if (user.address && user.address.city && user.address.state) {
+      location = `${user.address.city}, ${user.address.state}`;
+    } else if (user.address && user.address.city) {
+      location = user.address.city;
+    } else if (user.address && user.address.state) {
+      location = user.address.state;
+    }
+    
     return {
       id: application._id,
       name: `${user.firstName} ${user.lastName}`,
-      location: `${user.address.city}, ${user.address.state}`,
-      description: user.bio,
-      services: user.skills,
+      location: location,
+      description: user.bio || "No bio provided",
+      services: user.skills || [],
       image: user.profileImage || "/default.png",
       status: application.status,
     };
@@ -171,10 +182,10 @@ export const offerApplication = catchAsync(async (req, res, next) => {
   // Create a new contract
   const contract = await Contract.create({
     gig: gig._id,
-    provider: gig.postedBy, // Assuming `postedBy` is the provider
+    provider: gig.postedBy._id || gig.postedBy, // Handle both populated and unpopulated cases
     tasker: application.user, // The tasker assigned to the gig
     agreedCost: gig.cost, // Use the gig's cost as the agreed cost
-    status: "active", // Initial status of the contract
+    status: "pending_payment", // Set to pending_payment since tasker is automatically accepted
   });
 
   res.status(200).json({

@@ -98,9 +98,9 @@ router.use(protect); // All routes below require authentication
  *         STRIPE ONBOARDING & DASHBOARD (Tasker only)
  * ===============================
  */
-router.post('/stripe/connect-account', restrictTo('tasker'), createStripeAccount);
-router.get('/stripe/account-link', restrictTo('tasker'), createStripeAccountLink);
-router.get('/stripe/account-status', restrictTo('tasker'), getStripeAccountStatus);
+router.post('/stripe/connect-account', restrictTo('tasker', 'provider'), createStripeAccount);
+router.get('/stripe/account-link', restrictTo('tasker', 'provider'), createStripeAccountLink);
+router.get('/stripe/account-status', restrictTo('tasker', 'provider'), getStripeAccountStatus);
 // router.get('/stripe/dashboard-link', restrictTo('tasker'), getStripeLoginLink); // <<< Added route for Stripe Express Dashboard
 
 const updatePasswordValidation = [

@@ -168,11 +168,7 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
     if (!provider.stripeAccountId || provider.stripeChargesEnabled === false) {
       continue;
     }
-    // Check for successful payment for this gig
-    const payment = await Payment.findOne({ gig: gig._id, status: 'succeeded' });
-    if (!payment) {
-      continue;
-    }
+    // Removed payment check: gigs are now visible after provider connects Stripe
     filteredGigs.push(gig);
   }
 
@@ -624,9 +620,17 @@ export const matchGigsForTasker = catchAsync(async (req, res, next) => {
   logger.info(
     `matchGigsForTasker: Found ${gigs.length} gigs for tasker ${taskerId}`
   );
+  // After fetching gigs with aggregate
+  const gigsWithPayment = gigs.filter(gig => {
+    const provider = gig.providerInfo;
+    return provider && provider.stripeAccountId && provider.stripeChargesEnabled === true;
+  });
+  logger.info(
+    `matchGigsForTasker: Found ${gigsWithPayment.length} gigs for tasker ${taskerId} (with payment method)`
+  );
   res
     .status(200)
-    .json({ status: "success", results: gigs.length, data: { gigs } });
+    .json({ status: "success", results: gigsWithPayment.length, data: { gigs: gigsWithPayment } });
 });
 
 export const getMyGigsWithNoApplications = catchAsync(

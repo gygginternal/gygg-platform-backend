@@ -11,6 +11,7 @@ import { Offer } from "../models/Offer.js";
 import Notification from '../models/Notification.js';
 import Review from '../models/Review.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
+import { stripe } from "./paymentController.js";
 
 export const getMyContracts = catchAsync(async (req, res, next) => {
   const userId = req.user._id; // Get the logged-in user's ID
@@ -291,11 +292,29 @@ export const approveCompletionAndRelease = catchAsync(
       );
     }
 
+    // --- Manual payout to tasker (Stripe Express, manual schedule) ---
+    // Funds are in the tasker's Stripe balance, but not yet in their bank account.
+    // This triggers the payout to their bank when work is approved.
+    try {
+      await stripe.payouts.create(
+        {
+          amount: payment.amountReceivedByPayee, // in cents
+          currency: payment.currency,
+        },
+        {
+          stripeAccount: contract.tasker.stripeAccountId,
+        }
+      );
+    } catch (err) {
+      console.error("Error triggering manual payout to tasker:", err);
+      return next(new AppError("Failed to release payout to tasker.", 500));
+    }
+
     contract.status = "completed";
     await contract.save();
 
     console.log(
-      `Contract ${contract._id} marked as completed by Provider ${userId}.`
+      `Contract ${contract._id} marked as completed by Provider ${userId}. Payout released to tasker.`
     );
 
     // Notify tasker
@@ -321,7 +340,7 @@ export const approveCompletionAndRelease = catchAsync(
     return res.status(200).json({
       status: "success",
       message:
-        "Work approved successfully. Funds are available in the Tasker's Stripe balance.",
+        "Work approved successfully. Payout released to the Tasker's bank account.",
       data: {
         contract,
       },
@@ -498,3 +517,32 @@ async function sendNotification({ user, type, message, data, icon, link }) {
     console.error('Failed to send notification', { user, type, message, data, icon, link, err });
   }
 }
+
+export const getMyContractsWithPayments = catchAsync(async (req, res, next) => {
+  const userId = req.user._id;
+
+  // Find all contracts for this user
+  const contracts = await Contract.find({
+    $or: [{ provider: userId }, { tasker: userId }],
+  })
+    .populate("gig", "title category cost status")
+    .populate("provider", "firstName lastName email")
+    .populate("tasker", "firstName lastName email");
+
+  // For each contract, find the associated payment (if any)
+  const results = await Promise.all(
+    contracts.map(async contract => {
+      const payment = await Payment.findOne({ contract: contract._id });
+      return {
+        contract,
+        payment,
+      };
+    })
+  );
+
+  res.status(200).json({
+    status: "success",
+    results: results.length,
+    data: results,
+  });
+});

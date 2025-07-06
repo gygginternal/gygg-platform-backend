@@ -12,6 +12,7 @@ import {
   cancelContract,
   deleteContract, // Import the specific function
   getMyContracts, // Import the specific function
+  getMyContractsWithPayments, // <-- Add this import
 } from "../controllers/contractController.js"; // Create this controller
 
 const router = express.Router();
@@ -116,5 +117,11 @@ router.delete(
 ); // Calls the controller to handle deletion
 
 // Route to get all contracts of the current logged-in user
+
+router.get(
+  "/my-contracts-with-payments",
+  restrictTo("provider", "tasker"),
+  getMyContractsWithPayments
+);
 
 export default router;

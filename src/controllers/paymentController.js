@@ -14,7 +14,7 @@ import { Readable } from 'stream';
 import { generateInvoicePdf } from '../utils/invoicePdf.js';
 
 // Initialize Stripe with the secret key from environment variables
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-06-30.basil' });
 
 export const getPayments = catchAsync(async (req, res, next) => {
   const { status, payer, payee, page = 1, limit = 10 } = req.query;
@@ -260,10 +260,7 @@ export const createPaymentIntentForContract = catchAsync(
       );
 
     // Ensure that the contract is in a valid status for payment
-    if (
-      !["active", "failed"].includes(contract.status) &&
-      contract.status !== "active"
-    ) {
+    if (!["active", "submitted", "failed"].includes(contract.status)) {
       return next(
         new AppError(
           `Contract not awaiting payment (status: ${contract.status}).`,
@@ -281,134 +278,118 @@ export const createPaymentIntentForContract = catchAsync(
     if (amountInCents <= 0)
       return next(new AppError("Invalid contract cost.", 400));
 
-    // Calculate tax (from environment variable, default 13%)
-    const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
-    const taxAmount = Math.round(amountInCents * taxPercent);
-    const amountAfterTax = amountInCents - taxAmount;
-
-    // Calculate the application fee based on the platform's percentage and fixed fee
-    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-    const fixedFeeCents = 500; // Define the fixed fee ($5.00) in cents
-    const percentageFee = Math.round(amountAfterTax * (feePercentage / 100));
-    const applicationFeeAmount = percentageFee + fixedFeeCents;
-
-    // Optional: Sanity check - ensure fee doesn't exceed total after-tax amount
-    if (applicationFeeAmount >= amountAfterTax) {
-      console.error(
-        `Calculated fee (${applicationFeeAmount}) exceeds or equals total after-tax amount (${amountAfterTax}) for Contract ${contractId}.`
-      );
-      return next(
-        new AppError(
-          "Platform fee calculation error. Please contact support.",
-          500
-        )
-      );
+    // --- Stripe Tax Integration ---
+    // 1. Ensure provider has a Stripe customer with address info
+    let provider = await User.findById(providerId);
+    if (!provider) return next(new AppError("Provider not found.", 404));
+    let stripeCustomerId = provider.stripeCustomerId;
+    if (!stripeCustomerId) {
+      // Create a Stripe customer for the provider if not exists
+      const customer = await stripe.customers.create({
+        email: provider.email,
+        name: `${provider.firstName} ${provider.lastName}`,
+        address: provider.address ? {
+          line1: provider.address.street,
+          city: provider.address.city,
+          state: provider.address.state,
+          postal_code: provider.address.postalCode,
+          country: provider.address.country,
+        } : undefined,
+      });
+      stripeCustomerId = customer.id;
+      provider.stripeCustomerId = customer.id;
+      await provider.save();
     }
 
-    const paymentCurrency = "cad";
+    // 2. Remove manual tax calculation (Stripe Tax will handle it)
+    // const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
+    // const taxAmount = Math.round(amountInCents * taxPercent);
+    // const amountAfterTax = amountInCents - taxAmount;
 
-    // Check if there's an existing payment record for the contract
+    // 3. Calculate platform fee (still on pre-tax amount)
+    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
+    const fixedFeeCents = 500; // $5.00 in cents
+    const percentageFee = Math.round(amountInCents * (feePercentage / 100));
+    const applicationFeeAmount = percentageFee + fixedFeeCents;
+
+    // 4. Update payment record (taxAmount and amountAfterTax will be set after payment)
     let payment = await Payment.findOne({ contract: contractId });
     if (!payment) {
-      // If no payment record exists, create a new one
       payment = await Payment.create({
         contract: contractId,
         gig: contract.gig,
         payer: providerId,
         payee: contract.tasker._id,
         amount: amountInCents,
-        currency: paymentCurrency,
+        currency: 'cad',
         status: "requires_payment_method",
         stripeConnectedAccountId: taskerStripeAccountId,
         applicationFeeAmount: applicationFeeAmount,
-        amountReceivedByPayee: amountAfterTax - applicationFeeAmount,
-        taxAmount: taxAmount,
-        amountAfterTax: amountAfterTax,
+        amountReceivedByPayee: 0, // Set to 0, will update after payment
+        taxAmount: 0, // Set to 0, will update after payment
+        amountAfterTax: 0, // Set to 0, will update after payment
       });
-    } else if (
-      !["requires_payment_method", "failed"].includes(payment.status)
-    ) {
-      // If payment is already in another status, reject the operation
-      return next(
-        new AppError(`Payment already in status: ${payment.status}`, 400)
-      );
+    } else if (!["requires_payment_method", "failed"].includes(payment.status)) {
+      return next(new AppError(`Payment already in status: ${payment.status}`, 400));
     } else {
-      // Update payment if retrying
       payment.amount = amountInCents;
-      payment.currency = paymentCurrency;
+      payment.currency = 'cad';
       payment.stripeConnectedAccountId = taskerStripeAccountId;
       payment.applicationFeeAmount = applicationFeeAmount;
-      payment.amountReceivedByPayee = amountAfterTax - applicationFeeAmount;
-      payment.taxAmount = taxAmount;
-      payment.amountAfterTax = amountAfterTax;
+      payment.amountReceivedByPayee = 0;
+      payment.taxAmount = 0;
+      payment.amountAfterTax = 0;
       payment.status = "requires_payment_method";
       await payment.save();
     }
 
-    // Define the parameters for the payment intent
+    // 5. Create PaymentIntent with Stripe Tax enabled
     const paymentIntentParams = {
       amount: amountInCents,
       currency: payment.currency,
       automatic_payment_methods: { enabled: true },
-      capture_method: "manual", // Changed to manual for escrow
+      capture_method: "manual",
       application_fee_amount: payment.applicationFeeAmount,
       transfer_data: { destination: taskerStripeAccountId },
+      customer: stripeCustomerId,
+      automatic_tax: { enabled: true },
       metadata: {
         paymentId: payment._id.toString(),
         contractId: contractId.toString(),
         providerId: providerId.toString(),
         taskerId: contract.tasker._id.toString(),
-        taxAmount: taxAmount,
-        amountAfterTax: amountAfterTax,
       },
     };
 
-    // Attempt to update or create the payment intent
     let paymentIntent;
     if (payment.stripePaymentIntentId) {
       try {
         paymentIntent = await stripe.paymentIntents.update(
           payment.stripePaymentIntentId,
-          {
-            amount: amountInCents,
-            application_fee_amount: payment.applicationFeeAmount,
-            transfer_data: paymentIntentParams.transfer_data,
-            metadata: paymentIntentParams.metadata,
-          }
+          paymentIntentParams
         );
       } catch (error) {
         if (
           error.code === "payment_intent_unexpected_state" ||
           error.code === "resource_missing"
         ) {
-          // If an error occurs, create a new payment intent
-          paymentIntent = await stripe.paymentIntents.create(
-            paymentIntentParams
-          );
+          paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
           payment.stripePaymentIntentId = paymentIntent.id;
         } else {
           throw error;
         }
       }
     } else {
-      // If there's no existing payment intent, create one
       paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-
       payment.stripePaymentIntentId = paymentIntent.id;
       payment.stripePaymentIntentSecret = paymentIntent.client_secret;
     }
 
-    // Save payment with the payment intent ID
     payment.status = "requires_payment_method";
     await payment.save();
 
-    // Update contract with payment breakdown
-    contract.taxAmount = payment.taxAmount;
-    contract.platformFeeAmount = payment.applicationFeeAmount;
-    contract.payoutToTasker = payment.amountReceivedByPayee;
-    await contract.save();
+    // Contract breakdown will be updated after payment confirmation (webhook)
 
-    // Respond with the client secret to complete the payment
     res.status(200).json({
       status: "success",
       clientSecret: paymentIntent.client_secret,
@@ -556,9 +537,27 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
       return;
     }
 
-    // Update payment status
+    // Extract Stripe Tax and payout info if available
+    let taxAmount = 0;
+    let amountAfterTax = 0;
+    let amountReceivedByPayee = 0;
+    if (paymentIntent.automatic_tax && paymentIntent.automatic_tax.amount_collectable != null) {
+      taxAmount = paymentIntent.automatic_tax.amount_collectable;
+    }
+    // Stripe's PaymentIntent has 'amount' (total), 'amount_received', and 'application_fee_amount'
+    // amountAfterTax = amount - taxAmount
+    amountAfterTax = paymentIntent.amount - taxAmount;
+    // amountReceivedByPayee = amountAfterTax - applicationFeeAmount
+    if (payment.applicationFeeAmount != null) {
+      amountReceivedByPayee = amountAfterTax - payment.applicationFeeAmount;
+    }
+
+    // Update payment status and Stripe-calculated fields
     payment.status = "succeeded";
     payment.succeededAt = new Date();
+    payment.taxAmount = taxAmount;
+    payment.amountAfterTax = amountAfterTax;
+    payment.amountReceivedByPayee = amountReceivedByPayee;
     await payment.save();
 
     // Update contract status
@@ -750,8 +749,18 @@ export const createStripeAccountLink = catchAsync(async (req, res, next) => {
 // --- Get Stripe Account Status ---
 export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.user.id).select("+stripeAccountId");
-  if (!user || !user.stripeAccountId)
-    return next(new AppError("Stripe account not found for user.", 400));
+  if (!user || !user.stripeAccountId) {
+    // Return a response indicating no Stripe account exists
+    return res.status(200).json({
+      status: "success",
+      account: null,
+      payoutsEnabled: false,
+      detailsSubmitted: false,
+      chargesEnabled: false,
+      stripeAccountStatus: "not_connected",
+      message: "No Stripe account connected"
+    });
+  }
 
   try {
     const account = await stripe.accounts.retrieve(user.stripeAccountId);
@@ -769,6 +778,24 @@ export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
       `Error retrieving Stripe account ${user.stripeAccountId}:`,
       error
     );
+    
+    // Handle specific Stripe errors
+    if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
+      // The account doesn't exist or is invalid, clear it from the user
+      user.stripeAccountId = undefined;
+      await user.save({ validateBeforeSave: false });
+      
+      return res.status(200).json({
+        status: "success",
+        account: null,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        chargesEnabled: false,
+        stripeAccountStatus: "not_connected",
+        message: "Previous Stripe account was invalid and has been cleared"
+      });
+    }
+    
     return next(new AppError("Could not retrieve account status.", 500));
   }
 });
