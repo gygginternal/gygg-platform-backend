@@ -5,6 +5,7 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import Notification from '../models/Notification.js';
+import logger from "../utils/logger.js";
 
 let chatWebsocket;
 
