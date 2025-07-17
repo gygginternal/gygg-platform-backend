@@ -948,6 +948,11 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
       stripePayoutId: payout.id,
       description: `Withdrawal to bank account`,
       type: 'withdrawal',
+      stripeConnectedAccountId: user.stripeAccountId, // Required for schema
+      amountReceivedByPayee: requestedAmount, // Required for schema
+      amountAfterTax: requestedAmount, // Required for schema
+      applicationFeeAmount: 0, // Required for schema
+      taxAmount: 0 // Required for schema
     });
     await withdrawalRecord.save();
 

@@ -102,87 +102,126 @@ const checkOwnershipOrAdmin = (resourceUserId, requestingUser) => {
  * @access Public (or Protected, depending on your protect middleware placement in routes)
  */
 export const getAllGigs = catchAsync(async (req, res, next) => {
-  const queryObj = { ...req.query };
-  const excludedFields = ["page", "sort", "limit", "fields", "search", "minPrice", "maxPrice"]; // Added price range fields
-  excludedFields.forEach((el) => delete queryObj[el]);
-
+  // Use aggregation pipeline for more efficient filtering and pagination
+  const pipeline = [];
+  
+  // Base match conditions
+  const matchConditions = {};
+  
+  // --- Handle Status Filter ---
+  matchConditions.status = req.query.status || "open";
+  
   // --- Handle Text Search ---
-  let sortOptions = { createdAt: -1 }; // Default sort: newest first
-  let projection = {}; // For text score projection
-
   if (req.query.search && req.query.search.trim() !== "") {
     const searchTerm = req.query.search.trim();
-    queryObj.$text = { $search: searchTerm };
+    matchConditions.$text = { $search: searchTerm };
     logger.debug(`getAllGigs: Applying text search for term: "${searchTerm}"`);
-    // When using $text search, MongoDB can sort by relevance score
-    projection.score = { $meta: "textScore" };
-    sortOptions = { score: { $meta: "textScore" }, ...sortOptions }; // Sort by relevance, then by default
+    
+    // Add text score for sorting
+    pipeline.push({ 
+      $addFields: { 
+        score: { $meta: "textScore" } 
+      } 
+    });
   }
-
+  
   // --- Handle Category Filter ---
   if (req.query.category && req.query.category !== "All") {
-    queryObj.category = req.query.category;
+    matchConditions.category = req.query.category;
     logger.debug(`getAllGigs: Filtering by category: "${req.query.category}"`);
   }
-
+  
   // --- Handle Location Filter ---
   if (req.query.location && req.query.location.trim() !== "") {
-    const locationRegex = new RegExp(req.query.location.trim(), 'i');
-    queryObj.$or = [
+    const locationTerm = req.query.location.trim();
+    const locationRegex = new RegExp(locationTerm, 'i');
+    
+    // Debug the location structure in the database
+    const sampleGig = await Gig.findOne({ location: { $exists: true } }).lean();
+    logger.debug(`getAllGigs: Sample gig location structure: ${JSON.stringify(sampleGig?.location || 'No gigs with location found')}`);
+    
+    matchConditions.$or = [
       { 'location.city': locationRegex },
       { 'location.state': locationRegex },
       { 'location.country': locationRegex },
-      { 'location': locationRegex }
+      { 'location.address': locationRegex },
+      { 'location.postalCode': locationRegex }
     ];
-    logger.debug(`getAllGigs: Filtering by location: "${req.query.location}"`);
+    logger.debug(`getAllGigs: Filtering by location: "${locationTerm}" with query: ${JSON.stringify(matchConditions.$or)}`);
   }
-
+  
   // --- Handle Price Range Filter ---
   if (req.query.minPrice || req.query.maxPrice) {
-    queryObj.cost = {};
+    matchConditions.cost = {};
     if (req.query.minPrice) {
-      queryObj.cost.$gte = parseFloat(req.query.minPrice);
+      matchConditions.cost.$gte = parseFloat(req.query.minPrice);
     }
     if (req.query.maxPrice) {
-      queryObj.cost.$lte = parseFloat(req.query.maxPrice);
+      matchConditions.cost.$lte = parseFloat(req.query.maxPrice);
     }
     logger.debug(`getAllGigs: Filtering by price range: ${req.query.minPrice || '0'} - ${req.query.maxPrice || '∞'}`);
   }
-
+  
   // --- Handle Remote Filter ---
-  if (queryObj.isRemote !== undefined) {
-    queryObj.isRemote = queryObj.isRemote === "true";
+  if (req.query.isRemote !== undefined) {
+    matchConditions.isRemote = req.query.isRemote === "true";
   }
-
-  // --- Handle Status Filter ---
-  if (!queryObj.status) {
-    queryObj.status = "open";
-  }
-
-  // Only show gigs where provider has payment method and gig is paid
-  let gigs = await Gig.find(queryObj);
-  const filteredGigs = [];
-  for (const gig of gigs) {
-    // Check provider payment method
-    const provider = gig.postedBy;
-    if (!provider.stripeAccountId || provider.stripeChargesEnabled === false) {
-      continue;
+  
+  // Add match stage to pipeline
+  pipeline.push({ $match: matchConditions });
+  
+  // Join with users collection to get provider info
+  pipeline.push({
+    $lookup: {
+      from: "users",
+      localField: "postedBy",
+      foreignField: "_id",
+      as: "providerInfo"
     }
-    // Removed payment check: gigs are now visible after provider connects Stripe
-    filteredGigs.push(gig);
+  });
+  
+  pipeline.push({ $unwind: "$providerInfo" });
+  
+  // Filter by provider payment status
+  pipeline.push({
+    $match: {
+      "providerInfo.stripeAccountId": { $exists: true },
+      "providerInfo.stripeChargesEnabled": true
+    }
+  });
+  
+  // Sort by text score (if search was performed) and then by creation date
+  if (req.query.search && req.query.search.trim() !== "") {
+    pipeline.push({ $sort: { score: { $meta: "textScore" }, createdAt: -1 } });
+  } else {
+    pipeline.push({ $sort: { createdAt: -1 } });
   }
-
-  // Pagination (after filtering)
+  
+  // Count total results for pagination
+  const countPipeline = [...pipeline];
+  countPipeline.push({ $count: "total" });
+  const countResult = await Gig.aggregate(countPipeline);
+  const total = countResult.length > 0 ? countResult[0].total : 0;
+  
+  // Apply pagination
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const skip = (page - 1) * limit;
-  const paginatedGigs = filteredGigs.slice(skip, skip + limit);
-
+  
+  pipeline.push({ $skip: skip });
+  pipeline.push({ $limit: limit });
+  
+  // Execute the query
+  const gigs = await Gig.aggregate(pipeline);
+  logger.debug(`getAllGigs: Found ${gigs.length} gigs out of ${total} total matches`);
+  
   res.status(200).json({
     status: 'success',
-    results: paginatedGigs.length,
-    data: paginatedGigs,
-    total: filteredGigs.length,
+    results: gigs.length,
+    data: { gigs },
+    total,
+    page,
+    totalPages: Math.ceil(total / limit)
   });
 });
 

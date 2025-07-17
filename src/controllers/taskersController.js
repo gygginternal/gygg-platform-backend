@@ -174,6 +174,6 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: "success",
     results: matchedGigs.length,
-    data: matchedGigs,
+    data: { gigs: matchedGigs },
   });
 });

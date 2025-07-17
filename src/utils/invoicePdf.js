@@ -1,11 +1,19 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import PDFDocument from 'pdfkit';
 
-// Get __dirname equivalent for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Robust template path resolution for test and production
+function resolveTemplatePath() {
+  const candidates = [
+    path.resolve('src/utils/invoiceTemplate.txt'),
+    path.resolve('backend/src/utils/invoiceTemplate.txt'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error('invoiceTemplate.txt not found in expected locations');
+}
+const templatePath = resolveTemplatePath();
 
 // Helper to fill template placeholders
 function fillTemplate(template, data) {
@@ -14,24 +22,18 @@ function fillTemplate(template, data) {
 
 // Main function to generate and stream PDF
 export function generateInvoicePdf(invoiceData, res) {
-  const templatePath = path.join(__dirname, 'invoiceTemplate.txt');
-  const template = fs.readFileSync(templatePath, 'utf-8');
-  const filledText = fillTemplate(template, invoiceData);
+  try {
+    // Read the template file
+    const template = fs.readFileSync(templatePath, 'utf-8');
+    const filledTemplate = fillTemplate(template, invoiceData);
 
-  const doc = new PDFDocument({ margin: 50 });
-  let buffers = [];
-  doc.on('data', buffers.push.bind(buffers));
-  doc.on('end', () => {
-    const pdfData = Buffer.concat(buffers);
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename=invoice-${invoiceData.paymentId}.pdf`,
-      'Content-Length': pdfData.length,
-    });
-    res.end(pdfData);
-  });
-
-  // Write the filled text to the PDF (monospaced for alignment)
-  doc.font('Courier').fontSize(11).text(filledText, { lineGap: 2 });
-  doc.end();
-} 
+    const doc = new PDFDocument();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename=invoice.pdf');
+    doc.pipe(res);
+    doc.text(filledTemplate);
+    doc.end();
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: 'Failed to generate invoice PDF', error: err.message });
+  }
+}

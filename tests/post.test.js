@@ -86,7 +86,7 @@ describe('Post API', () => {
         .post('/api/v1/posts')
         .set('Authorization', `Bearer ${userToken}`)
         .field('content', 'Post with image')
-        .attach('file', Buffer.from('fake image data'), 'test.jpg');
+        .attach('postImage', Buffer.from('fake image data'), 'test.jpg');
 
       expect(res.statusCode).toBe(201);
       expect(res.body.status).toBe('success');
