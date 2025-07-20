@@ -66,12 +66,13 @@ const userSchema = new mongoose.Schema(
     },
     phoneNo: {
       type: String,
+      required: [true, "Phone number is required"],
       trim: true,
-      unique: true, // Optional: make phone numbers unique
-      sparse: true, // Optional: if unique, allows multiple null/undefined values
+      unique: true, // Make phone numbers unique
+      sparse: true, // Allows multiple null/undefined values if not provided
       validate: {
         validator: function(v) {
-          if (!v) return true;
+          if (!v) return false; // Don't allow empty values since it's required
           // E.164 format: + followed by 8 to 15 digits
           return /^\+\d{8,15}$/.test(v);
         },
@@ -102,7 +103,19 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: [true, "Password is required"],
-      minlength: 8,
+      minlength: [8, "Password must be at least 8 characters long"],
+      validate: {
+        validator: function(password) {
+          // Password strength validation
+          const hasUpperCase = /[A-Z]/.test(password);
+          const hasLowerCase = /[a-z]/.test(password);
+          const hasNumbers = /\d/.test(password);
+          const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+          
+          return hasUpperCase && hasLowerCase && hasNumbers && hasSpecialChar;
+        },
+        message: "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*(),.?\":{}|<>)"
+      },
       select: false,
     },
     passwordConfirm: {

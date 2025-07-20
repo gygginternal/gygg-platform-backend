@@ -6,25 +6,12 @@ import {
     getChatHistory,      // Function to get the chat history for a contract
     getConversations,    // Function to get all conversations for the logged-in user
     getUnreadMessageCount,
+    uploadChatImage,     // Function to upload chat images
 } from '../controllers/chatController.js';
 import { protect } from "../controllers/authController.js";
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { uploadS3 } from '../config/s3Config.js';
 
 const router = express.Router();
-
-// Multer setup for chat image uploads
-const uploadDir = path.join(process.cwd(), 'uploads', 'chat');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.round(Math.random()*1e9)}${ext}`);
-  }
-});
-const upload = multer({ storage });
 
 /**
  * --- Protect Routes ---
@@ -55,12 +42,20 @@ router.get('/unread-count', getUnreadMessageCount);
 router.get('/history/:contractId?', getChatHistory);
 
 // Route to send a message (with or without a contract)
-router.post('/send/:contractId?', sendMessage);
+router.post('/send/:contractId?', 
+  [
+    body('message').optional().trim(),
+    body('receiverId').optional().isMongoId().withMessage('Invalid receiver ID'),
+    body('type').optional().isIn(['text', 'image', 'file']).withMessage('Invalid message type'),
+  ],
+  validateRequest,
+  sendMessage
+);
 
-router.post('/upload', upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const url = `/uploads/chat/${req.file.filename}`;
-  res.status(201).json({ status: 'success', url });
-});
+// Route to upload chat images to S3
+router.post('/upload-image', 
+  uploadS3.single('chatImage'),
+  uploadChatImage
+);
 
 export default router;

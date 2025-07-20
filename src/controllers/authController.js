@@ -114,10 +114,36 @@ export const signup = catchAsync(async (req, res, next) => {
       token,
     });
   } catch (err) {
-    // Handle duplicate email error
-    if (err.code === 11000 && err.keyPattern && err.keyPattern.email) {
-      return res.status(400).json({ status: 'fail', message: 'Email already exists.' });
+    // Handle duplicate key errors
+    if (err.code === 11000) {
+      if (err.keyPattern && err.keyPattern.email) {
+        return res.status(400).json({ 
+          status: 'fail', 
+          message: 'This email address is already registered. Please use a different email or try logging in.' 
+        });
+      }
+      if (err.keyPattern && err.keyPattern.phoneNo) {
+        return res.status(400).json({ 
+          status: 'fail', 
+          message: 'This phone number is already registered. Please use a different phone number.' 
+        });
+      }
+      // Generic duplicate key error
+      return res.status(400).json({ 
+        status: 'fail', 
+        message: 'This information is already registered. Please check your email and phone number.' 
+      });
     }
+    
+    // Handle validation errors
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({
+        status: 'fail',
+        message: errors.join('. ')
+      });
+    }
+    
     return next(err);
   }
 });

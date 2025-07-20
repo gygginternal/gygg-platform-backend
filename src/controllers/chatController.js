@@ -4,8 +4,17 @@ import Contract from "../models/Contract.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { RekognitionClient, DetectModerationLabelsCommand } from '@aws-sdk/client-rekognition';
 import Notification from '../models/Notification.js';
 import logger from "../utils/logger.js";
+import { 
+  filterContent, 
+  shouldBlockContent, 
+  getViolationMessage,
+  analyzeImageContent,
+  getImageViolationMessage,
+  shouldBlockImage
+} from "../utils/contentFilter.js";
 
 let chatWebsocket;
 
@@ -14,6 +23,15 @@ export const setChatWebsocket = (websocket) => {
 };
 
 const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+// Configure AWS Rekognition for image content moderation
+const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -35,6 +53,8 @@ async function deleteS3Attachment(attachment) {
     }
   }
 }
+
+
 
 async function notifyAdmin(message, data) {
   try {
@@ -112,6 +132,23 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     return next(new AppError("Message content cannot be empty.", 400));
   }
 
+  // Filter inappropriate content
+  const contentCheck = filterContent(message);
+  
+  // Block message if it contains severe violations
+  if (shouldBlockContent(message)) {
+    const errorMessage = getViolationMessage(contentCheck.violations);
+    logger.warn('Blocked inappropriate message', {
+      userId: req.user.id,
+      violations: contentCheck.violations,
+      originalMessage: message.substring(0, 50) + '...'
+    });
+    return next(new AppError(errorMessage, 400));
+  }
+
+  // Use cleaned message if there were minor violations
+  const finalMessage = contentCheck.isClean ? message.trim() : contentCheck.cleanedText;
+
   // Verify that the user is authorized to send a message for the given contract (if provided)
   const contract = await verifyContractParty(contractId, req.user.id);
 
@@ -136,7 +173,7 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     contract: contractId || null,
     sender: req.user.id,
     receiver: receiverId,
-    content: message.trim(),
+    content: finalMessage,
     type,
     attachment: attachment || undefined
   });
@@ -341,6 +378,95 @@ export const getUnreadMessageCount = catchAsync(async (req, res, next) => {
       unreadCount,
     },
   });
+});
+
+/**
+ * Controller to upload chat images to S3 with content moderation
+ * @param {object} req - The request object.
+ * @param {object} res - The response object.
+ * @param {function} next - The next middleware function.
+ */
+export const uploadChatImage = catchAsync(async (req, res, next) => {
+  if (!req.file) {
+    return next(new AppError("No image file provided.", 400));
+  }
+
+  // The S3 URL and key are available from multer-s3
+  const imageUrl = req.file.location;
+  const s3Key = req.file.key;
+  const fileName = req.file.originalname;
+  const fileType = req.file.mimetype;
+  const fileSize = req.file.size;
+
+  try {
+    // Analyze image content for inappropriate material
+    const moderationResult = await analyzeImageContent(s3Key);
+    
+    // If image contains inappropriate content, delete it and reject
+    if (shouldBlockImage(moderationResult)) {
+      // Delete the uploaded image from S3
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: s3Key,
+        }));
+      } catch (deleteError) {
+        logger.error('Failed to delete inappropriate image from S3:', deleteError);
+      }
+
+      // Log the violation
+      logger.warn('Blocked inappropriate image upload', {
+        userId: req.user.id,
+        fileName,
+        labels: moderationResult.labels.map(l => l.Name),
+        confidence: moderationResult.confidence
+      });
+
+      // Notify admin of the violation
+      await notifyAdmin('Inappropriate image upload blocked', {
+        userId: req.user.id,
+        fileName,
+        labels: moderationResult.labels,
+        s3Key
+      });
+
+      const errorMessage = getImageViolationMessage(moderationResult.violations, 'shared');
+      return next(new AppError(errorMessage, 400));
+    }
+
+    // Log successful upload with moderation check
+    logger.info(`Chat image uploaded and approved: ${imageUrl}`, {
+      userId: req.user.id,
+      fileName,
+      fileSize,
+      moderationPassed: true,
+      confidence: moderationResult.confidence
+    });
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        url: imageUrl,
+        fileName,
+        fileType,
+        fileSize
+      }
+    });
+
+  } catch (error) {
+    // If moderation fails, delete the image and return error
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: s3Key,
+      }));
+    } catch (deleteError) {
+      logger.error('Failed to delete image after moderation error:', deleteError);
+    }
+
+    logger.error('Image moderation failed:', error);
+    return next(new AppError("Failed to process image. Please try again.", 500));
+  }
 });
 
 export const deleteChatMessage = catchAsync(async (req, res, next) => {

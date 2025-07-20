@@ -9,6 +9,11 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid"; // For generating unique filenames
 import Notification from '../models/Notification.js';
+import { 
+  analyzeImageContent,
+  getImageViolationMessage,
+  shouldBlockImage
+} from "../utils/contentFilter.js";
 
 // Configure AWS S3
 const s3Client = new S3Client({
@@ -18,6 +23,8 @@ const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
 });
+
+
 
 // Configure multer for file upload
 const upload = multer({
@@ -148,7 +155,7 @@ export const getPost = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: "success", data: { post } }); // Return post data
 });
 
-// Route handler to create a new post with image upload
+// Route handler to create a new post with image upload and content moderation
 export const createPost = catchAsync(async (req, res, next) => {
   const { content } = req.body; // Extract content from form data
 
@@ -157,11 +164,71 @@ export const createPost = catchAsync(async (req, res, next) => {
     return next(new AppError("Content cannot be empty.", 400));
   }
 
-  // Handle image upload to S3 (using uploadS3 middleware for 'postImage')
+  // Handle image upload to S3 with content moderation
   let mediaUrls = [];
   if (req.file) {
-    // S3 URL is available as req.file.location (from multer-s3)
-    mediaUrls.push(req.file.location);
+    const s3Key = req.file.key;
+    const imageUrl = req.file.location;
+
+    try {
+      // Analyze image content for inappropriate material
+      const moderationResult = await analyzeImageContent(s3Key);
+      
+      // If image contains inappropriate content, delete it and reject
+      if (shouldBlockImage(moderationResult)) {
+        // Delete the uploaded image from S3
+        try {
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: s3Key,
+          }));
+        } catch (deleteError) {
+          logger.error('Failed to delete inappropriate post image from S3:', deleteError);
+        }
+
+        // Log the violation
+        logger.warn('Blocked inappropriate post image', {
+          userId: req.user.id,
+          fileName: req.file.originalname,
+          labels: moderationResult.labels.map(l => l.Name),
+          confidence: moderationResult.confidence
+        });
+
+        // Notify admin of the violation
+        await notifyAdmin('Inappropriate post image blocked', {
+          userId: req.user.id,
+          fileName: req.file.originalname,
+          labels: moderationResult.labels,
+          s3Key
+        });
+
+        const errorMessage = getImageViolationMessage(moderationResult.violations, 'posted');
+        return next(new AppError(errorMessage, 400));
+      }
+
+      // Image passed moderation, add to media URLs
+      mediaUrls.push(imageUrl);
+      
+      logger.info(`Post image uploaded and approved: ${imageUrl}`, {
+        userId: req.user.id,
+        fileName: req.file.originalname,
+        moderationPassed: true
+      });
+
+    } catch (error) {
+      // If moderation fails, delete the image and return error
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: s3Key,
+        }));
+      } catch (deleteError) {
+        logger.error('Failed to delete post image after moderation error:', deleteError);
+      }
+
+      logger.error('Post image moderation failed:', error);
+      return next(new AppError("Failed to process image. Please try again.", 500));
+    }
   }
 
   // Create a new post with the provided data
@@ -455,6 +522,8 @@ async function deleteS3Media(media) {
     }
   }
 }
+
+
 
 async function notifyAdmin(message, data) {
   try {

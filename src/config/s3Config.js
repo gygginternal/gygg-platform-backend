@@ -48,6 +48,10 @@ const s3Storage = multerS3({
             folder = `users/${userId}/profile`;
         } else if (file.fieldname === 'albumImage') {
             folder = `users/${userId}/album`;
+        } else if (file.fieldname === 'postImage') {
+            folder = `users/${userId}/posts`;
+        } else if (file.fieldname === 'chatImage') {
+            folder = `users/${userId}/chat`;
         } // Add more folders for gig proof, etc.
 
         const randomBytes = crypto.randomBytes(16).toString('hex');
