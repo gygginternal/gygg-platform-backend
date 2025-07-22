@@ -171,12 +171,35 @@ export const sendMessage = catchAsync(async (req, res, next) => {
   });
 
   // Fetch the populated message (to include sender details)
-  const populatedMessage = await ChatMessage.findById(newMessage._id);
+  const populatedMessage = await ChatMessage.findById(newMessage._id).populate({
+    path: "sender",
+    select: "firstName lastName profileImage"
+  });
 
   // Emit socket.io events for real-time updates
   if (chatWebsocket) {
+    // Create a properly formatted message for real-time updates
+    const realtimeMessage = {
+      _id: populatedMessage._id,
+      sender: {
+        _id: populatedMessage.sender._id,
+        firstName: populatedMessage.sender.firstName,
+        lastName: populatedMessage.sender.lastName,
+        profileImage: populatedMessage.sender.profileImage
+      },
+      receiver: populatedMessage.receiver,
+      content: populatedMessage.content,
+      type: populatedMessage.type,
+      attachment: populatedMessage.attachment,
+      timestamp: populatedMessage.timestamp,
+      readStatus: populatedMessage.readStatus
+    };
+
     // Notify receiver of new message
-    chatWebsocket.emitNewMessage(receiverId, populatedMessage);
+    chatWebsocket.emitNewMessage(receiverId, realtimeMessage);
+    
+    // Also notify sender for multi-device sync
+    chatWebsocket.emitNewMessage(req.user.id, realtimeMessage);
 
     // Update unread count for receiver
     const unreadCount = await ChatMessage.countDocuments({
@@ -236,9 +259,10 @@ export const getChatHistory = catchAsync(async (req, res, next) => {
         ]
       };
 
-  // Fetch chat messages, sorted by timestamp (ascending)
+  // Fetch chat messages, sorted by timestamp (descending for pagination, then reverse)
+  // This ensures we get the most recent messages first, then reverse for chronological order
   const messages = await ChatMessage.find(query)
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: -1 })
     .skip(skip)
     .limit(limit);
 
@@ -257,11 +281,14 @@ export const getChatHistory = catchAsync(async (req, res, next) => {
     chatWebsocket.emitUnreadCountUpdate(req.user.id, unreadCount);
   }
 
+  // Reverse messages to show chronological order (oldest first)
+  const chronologicalMessages = messages.reverse();
+
   // Respond with the list of messages
   res.status(200).json({
     status: "success",
-    results: messages.length,
-    data: { messages },
+    results: chronologicalMessages.length,
+    data: { messages: chronologicalMessages },
   });
 });
 
