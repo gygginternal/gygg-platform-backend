@@ -1,3 +1,81 @@
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     UserSignup:
+ *       type: object
+ *       required:
+ *         - email
+ *         - password
+ *         - passwordConfirm
+ *         - phoneNo
+ *         - dateOfBirth
+ *       properties:
+ *         firstName:
+ *           type: string
+ *           maxLength: 50
+ *         lastName:
+ *           type: string
+ *           maxLength: 50
+ *         email:
+ *           type: string
+ *           format: email
+ *         password:
+ *           type: string
+ *           minLength: 8
+ *           pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>])'
+ *         passwordConfirm:
+ *           type: string
+ *         phoneNo:
+ *           type: string
+ *           pattern: '^\+\d{8,15}$'
+ *         dateOfBirth:
+ *           type: string
+ *           format: date
+ *         role:
+ *           type: array
+ *           items:
+ *             type: string
+ *             enum: [tasker, provider]
+ *     UserLogin:
+ *       type: object
+ *       required:
+ *         - email
+ *         - password
+ *       properties:
+ *         email:
+ *           type: string
+ *           format: email
+ *         password:
+ *           type: string
+ *     UserUpdate:
+ *       type: object
+ *       properties:
+ *         firstName:
+ *           type: string
+ *           maxLength: 50
+ *         lastName:
+ *           type: string
+ *           maxLength: 50
+ *         phoneNo:
+ *           type: string
+ *           pattern: '^\+\d{8,15}$'
+ *         bio:
+ *           type: string
+ *           maxLength: 750
+ *         hobbies:
+ *           type: array
+ *           items:
+ *             type: string
+ *         skills:
+ *           type: array
+ *           items:
+ *             type: string
+ *         ratePerHour:
+ *           type: number
+ *           minimum: 0
+ */
+
 import express from 'express';
 import { body, param, query } from 'express-validator';
 import validateRequest from '../middleware/validateRequest.js';
@@ -67,12 +145,78 @@ const signupValidation = [
 
     body('dateOfBirth').notEmpty().withMessage('Date of Birth is required').isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
 ];
+/**
+ * @swagger
+ * /users/signup:
+ *   post:
+ *     summary: Register a new user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UserSignup'
+ *     responses:
+ *       201:
+ *         description: User created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                 token:
+ *                   type: string
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ */
 router.post('/signup', signupValidation, validateRequest, signup);
 
 const loginValidation = [
     body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
     body('password').notEmpty().withMessage('Password required'),
 ];
+/**
+ * @swagger
+ * /users/login:
+ *   post:
+ *     summary: Login user
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UserLogin'
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     token:
+ *                       type: string
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
 router.post('/login', loginValidation, validateRequest, login);
 
 router.get('/verifyEmail/:token', verifyEmail); // Token validated by controller
@@ -119,6 +263,34 @@ const updatePasswordValidation = [
 ];
 router.patch('/updateMyPassword', updatePasswordValidation, validateRequest, updatePassword);
 
+/**
+ * @swagger
+ * /users/me:
+ *   get:
+ *     summary: Get current user profile
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
 router.get('/me', getMe, getUser); // getMe sets req.params.id for getUser
 
 const updateMeValidation = [

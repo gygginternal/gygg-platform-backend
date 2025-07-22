@@ -190,14 +190,29 @@ export const getViolationMessage = (violations) => {
   return 'Your message contains inappropriate content. Please revise your message.';
 };
 
-// Configure AWS Rekognition for image content moderation
-const rekognitionClient = new RekognitionClient({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
+// Configure AWS Rekognition for image content moderation (optional)
+let rekognitionClient = null;
+let rekognitionAvailable = false;
+
+try {
+  if (process.env.AWS_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    const { RekognitionClient } = await import('@aws-sdk/client-rekognition');
+    rekognitionClient = new RekognitionClient({
+      region: process.env.AWS_REGION,
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      },
+    });
+    rekognitionAvailable = true;
+    logger.info('AWS Rekognition initialized for image content moderation');
+  } else {
+    logger.warn('AWS Rekognition not configured - image content moderation disabled');
+  }
+} catch (error) {
+  logger.warn('Failed to initialize AWS Rekognition:', error.message);
+  rekognitionAvailable = false;
+}
 
 /**
  * Analyze image content using AWS Rekognition for inappropriate content
@@ -206,7 +221,34 @@ const rekognitionClient = new RekognitionClient({
  * @returns {object} - Analysis result with moderation labels
  */
 export const analyzeImageContent = async (s3Key, minConfidence = 60) => {
+  // Check if image moderation is enabled
+  if (process.env.ENABLE_IMAGE_MODERATION !== 'true') {
+    logger.info('Image moderation disabled via ENABLE_IMAGE_MODERATION environment variable');
+    return {
+      isAppropriate: true,
+      labels: [],
+      violations: [],
+      confidence: 0,
+      severity: 'none',
+      disabled: true
+    };
+  }
+
+  // If Rekognition is not available, skip image analysis
+  if (!rekognitionAvailable || !rekognitionClient) {
+    logger.info('Image content analysis skipped - AWS Rekognition not available');
+    return {
+      isAppropriate: true,
+      labels: [],
+      violations: [],
+      confidence: 0,
+      severity: 'none',
+      skipped: true
+    };
+  }
+
   try {
+    const { DetectModerationLabelsCommand } = await import('@aws-sdk/client-rekognition');
     const command = new DetectModerationLabelsCommand({
       Image: {
         S3Object: {
@@ -244,7 +286,8 @@ export const analyzeImageContent = async (s3Key, minConfidence = 60) => {
       violations: [],
       confidence: 0,
       severity: 'none',
-      error: error.message
+      error: error.message,
+      fallback: true
     };
   }
 };

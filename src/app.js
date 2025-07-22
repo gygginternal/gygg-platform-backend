@@ -11,6 +11,7 @@ import xss from "xss-clean";
 import AppError from "./utils/AppError.js";
 import globalErrorHandler from "./middleware/errorHandler.js";
 import logger from "./utils/logger.js"; // Logging utility
+import { specs, swaggerUi } from "./config/swagger.js";
 
 // Routers
 import userRouter from "./routes/userRoutes.js";
@@ -53,6 +54,24 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again in an hour!'
 });
 app.use('/api', limiter);
+
+// --- Health Check Endpoint ---
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV,
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// --- API Documentation ---
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Gig Platform API Documentation'
+}));
 
 // --- Stripe Webhook Handler (needs raw body) ---
 app.post(

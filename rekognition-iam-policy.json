@@ -1,0 +1,37 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "RekognitionImageAnalysis",
+            "Effect": "Allow",
+            "Action": [
+                "rekognition:DetectModerationLabels",
+                "rekognition:DetectLabels",
+                "rekognition:DetectText",
+                "rekognition:DetectFaces"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "S3AccessForRekognition",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:GetObjectVersion"
+            ],
+            "Resource": [
+                "arn:aws:s3:::gig-platform-uploads-dev/*",
+                "arn:aws:s3:::gig-platform-uploads-dev"
+            ]
+        },
+        {
+            "Sid": "S3BucketAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketLocation"
+            ],
+            "Resource": "arn:aws:s3:::gig-platform-uploads-dev"
+        }
+    ]
+}

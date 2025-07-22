@@ -4,7 +4,6 @@ import Contract from "../models/Contract.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { RekognitionClient, DetectModerationLabelsCommand } from '@aws-sdk/client-rekognition';
 import Notification from '../models/Notification.js';
 import logger from "../utils/logger.js";
 import { 
@@ -30,14 +29,7 @@ const s3Client = new S3Client({
   },
 });
 
-// Configure AWS Rekognition for image content moderation
-const rekognitionClient = new RekognitionClient({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
-});
+// AWS Rekognition client is now initialized in contentFilter.js
 
 async function deleteS3Attachment(attachment) {
   if (!attachment || !attachment.url) return;

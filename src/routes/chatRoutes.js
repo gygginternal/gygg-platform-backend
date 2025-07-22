@@ -1,4 +1,11 @@
 import express from 'express';
+/**
+ * @swagger
+ * tags:
+ *   name: Chat
+ *   description: Chat and messaging endpoints
+ */
+
 import { body, param, query } from 'express-validator';
 import validateRequest from '../middleware/validateRequest.js';
 import {
@@ -25,6 +32,36 @@ router.use(protect); // Protect all routes below this middleware (user must be l
  * These routes handle the retrieval of conversations and sending/receiving messages.
  */
 
+/**
+ * @swagger
+ * /chat/conversations:
+ *   get:
+ *     summary: Get all conversations for the logged-in user
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Conversations retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     conversations:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/ChatMessage'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
 // Route to get all conversations for the logged-in user (accessible only by logged-in users)
 router.get('/conversations', getConversations); // Get all conversations
 

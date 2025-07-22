@@ -3,8 +3,9 @@ import User from "../models/User.js";
 import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
-import { s3Client } from "../config/s3Config.js"; // Assuming s3Config exports s3Client
-import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { findDocumentById, updateDocumentById, withTransaction, paginateResults } from "../utils/dbHelpers.js";
+import { deleteS3Object, cleanupS3Objects } from "../utils/s3Helpers.js";
+import { sendSuccessResponse, sendCreatedResponse, sendNoContentResponse, sendPaginatedResponse } from "../utils/responseHelpers.js";
 import { Gig } from '../models/Gig.js';
 import Post from '../models/Post.js';
 import ChatMessage from '../models/ChatMessage.js';
@@ -32,20 +33,7 @@ const filterObj = (obj, ...allowedFields) => {
   return newObj;
 };
 
-const deleteS3Object = async (key) => {
-    if (!key || key === 'default.jpg') {
-        logger.debug(`deleteS3Object: No valid key or key is default. Key: ${key}`);
-        return;
-    }
-    const deleteParams = { Bucket: process.env.AWS_S3_BUCKET_NAME, Key: key };
-    try {
-        logger.info(`deleteS3Object: Attempting to delete S3 object: ${key}`);
-        await s3Client.send(new DeleteObjectCommand(deleteParams));
-        logger.info(`deleteS3Object: S3 object ${key} deleted successfully.`);
-    } catch (s3DeleteError) {
-        logger.error(`deleteS3Object: Failed to delete S3 object ${key}`, { error: s3DeleteError });
-    }
-};
+// Removed deleteS3Object - now using shared utility
 
 // --- Controller: Get the current logged-in user (sets up for getUser) ---
 export const getMe = (req, res, next) => {
@@ -166,50 +154,45 @@ export const updateMe = catchAsync(async (req, res, next) => {
   }
 
   logger.debug(`updateMe: Updating user ${req.user.id} with final data:`, filteredBody);
-  const updatedUser = await User.findByIdAndUpdate(req.user.id, filteredBody, {
-    new: true, runValidators: true,
-  });
-
-  if (!updatedUser) return next(new AppError('User not found after update.', 404));
+  const updatedUser = await updateDocumentById(User, req.user.id, filteredBody, { new: true, runValidators: true }, 'User not found after update.');
 
   logger.info(`User profile updated successfully for ${req.user.id}`);
-  res.status(200).json({ status: 'success', data: { user: updatedUser } });
+  sendSuccessResponse(res, 200, { user: updatedUser });
 });
 
 // --- Controller: Deactivate logged-in user's account ---
 export const deleteMe = catchAsync(async (req, res, next) => {
   logger.warn(`User ${req.user.id} deleting their account. Starting cleanup.`);
-  const user = await User.findById(req.user.id).select('+profileImageKey album');
-  if (!user) return next(new AppError('User not found.', 404));
+  
+  await withTransaction(async (session) => {
+    const user = await findDocumentById(User, req.user.id, 'User not found.');
+    
+    // S3: Delete profile image
+    await deleteS3Object(user.profileImageKey);
+    
+    // S3: Delete album images
+    await cleanupS3Objects(user.album);
 
-  // S3: Delete profile image
-  await deleteS3Object(user.profileImageKey);
-  // S3: Delete album images
-  if (user.album && user.album.length > 0) {
-    for (const photo of user.album) {
-      await deleteS3Object(photo.key);
-    }
-  }
+    // DB: Cascade delete related records
+    await Promise.all([
+      Gig.deleteMany({ postedBy: user._id }, { session }),
+      Post.deleteMany({ author: user._id }, { session }),
+      ChatMessage.deleteMany({ $or: [{ sender: user._id }, { receiver: user._id }] }, { session }),
+      Contract.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }, { session }),
+      Payment.deleteMany({ $or: [{ payer: user._id }, { payee: user._id }] }, { session }),
+      Offer.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }, { session }),
+      Application.deleteMany({ user: user._id }, { session }),
+      Review.deleteMany({ $or: [{ reviewer: user._id }, { reviewee: user._id }] }, { session }),
+      Notification.deleteMany({ user: user._id }, { session }),
+    ]);
 
-  // DB: Cascade delete related records
-  await Promise.all([
-    Gig.deleteMany({ postedBy: user._id }),
-    Post.deleteMany({ author: user._id }),
-    ChatMessage.deleteMany({ $or: [{ sender: user._id }, { receiver: user._id }] }),
-    Contract.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
-    Payment.deleteMany({ $or: [{ payer: user._id }, { payee: user._id }] }),
-    Offer.deleteMany({ $or: [{ provider: user._id }, { tasker: user._id }] }),
-    Application.deleteMany({ user: user._id }),
-    Review.deleteMany({ $or: [{ reviewer: user._id }, { reviewee: user._id }] }),
-    Notification.deleteMany({ user: user._id }),
-  ]);
+    // Finally, delete the user
+    await User.findByIdAndDelete(user._id, { session });
+    logger.warn(`User ${user._id} and all related data deleted.`);
+    await notifyAdmin('User account deleted', { userId: user._id, email: user.email });
+  });
 
-  // Finally, delete the user
-  await User.findByIdAndDelete(user._id);
-  logger.warn(`User ${user._id} and all related data deleted.`);
-  await notifyAdmin('User account deleted', { userId: user._id, email: user.email });
-
-  res.status(204).json({ status: 'success', data: null });
+  sendNoContentResponse(res);
 });
 
 // --- Controller: Upload album photo ---
@@ -391,34 +374,20 @@ export const getAllUsers = catchAsync(async (req, res, next) => {
   logger.debug("Admin: Fetching all users", { query: req.query });
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 20;
-  const skip = (page - 1) * limit;
 
-  const users = await User.find().skip(skip).limit(limit);
-  const totalUsers = await User.countDocuments();
+  const query = User.find();
+  const paginatedData = await paginateResults(query, page, limit);
 
-  res.status(200).json({
-    status: "success",
-    results: users.length,
-    total: totalUsers,
-    page: page,
-    totalPages: Math.ceil(totalUsers / limit),
-    data: { users },
-  });
+  sendPaginatedResponse(res, paginatedData, 'users');
 });
 
 // Get Single User (Admin or used by getMe)
 export const getUser = catchAsync(async (req, res, next) => {
   const userIdToFind = req.params.id; // ID comes from the route parameter (:id)
-  // Validation for userIdToFind format is done by express-validator in routes
   logger.debug(`Fetching user data for ID: ${userIdToFind}`);
-  const user = await User.findById(userIdToFind);
-  if (!user) {
-    return next(new AppError("No user found with that ID", 404));
-  }
-  res.status(200).json({
-    status: "success",
-    data: { user },
-  });
+  const user = await findDocumentById(User, userIdToFind, "No user found with that ID");
+  
+  sendSuccessResponse(res, 200, { user });
 });
 
 // Update User by Admin
