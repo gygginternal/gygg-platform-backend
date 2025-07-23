@@ -75,16 +75,131 @@ const sendVerificationEmail = async (user, req) => {
   const verificationToken = user.createEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
 
-  const verificationURL = `${req.protocol}://${req.get(
+  // Create both API and frontend URLs
+  const apiVerificationURL = `${req.protocol}://${req.get(
     "host"
   )}/api/v1/users/verifyEmail/${verificationToken}`;
-  const message = `Welcome to Gig Platform! Please verify your email:\n\n${verificationURL}\n\nThis link will expire in 10 minutes.`;
+
+  // Use FRONTEND_URL from environment if available, otherwise construct from request
+  const frontendBaseURL =
+    process.env.FRONTEND_URL ||
+    `${req.protocol}://${req.get("host").replace(/:\d+/, "")}:3000`;
+  const frontendVerificationURL = `${frontendBaseURL}/verify-email?token=${verificationToken}`;
+
+  // Plain text version
+  const message = `Welcome to Gygg Platform!\n\nPlease verify your email by clicking this link:\n\n${apiVerificationURL}\n\nOr visit our website and enter this verification code: ${verificationToken}\n\nThis link will expire in 10 minutes.\n\nIf you didn't create an account, please ignore this email.`;
+
+  // HTML version with better formatting
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Email</title>
+    <style>
+      body { 
+        font-family: Arial, sans-serif; 
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .container {
+        background-color: #f9f9f9;
+        border-radius: 8px;
+        padding: 30px;
+        border: 1px solid #e0e0e0;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      h1 {
+        color: #da9a3d;
+        font-weight: 900;
+        font-size: 32px;
+        max-width: 150px;
+        margin-bottom: 20px;
+        margin-left: auto;
+        margin-right: auto;
+        text-align: center;
+      }
+      h2 {
+        color: #00aaba;
+        margin-bottom: 20px;
+        font-size: 24px;
+      }
+      .button {
+        display: inline-block;
+        background-color: #00aaba;
+        color: white !important;
+        text-decoration: none;
+        padding: 12px 30px;
+        border-radius: 4px;
+        font-weight: bold;
+        margin: 20px 0;
+        text-align: center;
+      }
+      .button:hover {
+        background-color: #008b8b;
+      }
+      .footer {
+        margin-top: 30px;
+        font-size: 12px;
+        color: #666;
+        text-align: center;
+      }
+      .url-display {
+        word-break: break-all;
+        background-color: #f0f0f0;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin: 15px 0;
+      }
+      .expiry {
+        font-weight: bold;
+        color: #d99633;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>GYGG</h1>
+        <h2>Welcome to Gygg Platform!</h2>
+      </div>
+      
+      <p>Thank you for signing up. To complete your registration and verify your email address, please click the button below:</p>
+      
+      <div style="text-align: center;">
+        <a href="${apiVerificationURL}" class="button">Verify My Email</a>
+      </div>
+      
+      <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+      <div class="url-display">${apiVerificationURL}</div>
+      
+      <p class="expiry">This link will expire in 10 minutes.</p>
+      
+      <p>If you didn't create an account with us, please ignore this email.</p>
+      
+      <div class="footer">
+        <p>&copy; ${new Date().getFullYear()} Gygg Platform. All rights reserved.</p>
+        <p>This is an automated message, please do not reply to this email.</p>
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
 
   try {
     await sendEmail({
       email: user.email,
-      subject: "Gig Platform - Verify Your Email Address",
+      subject: "Gygg Platform - Verify Your Email Address",
       message,
+      html,
     });
     logger.info(`Verification email sent to ${user.email}`);
   } catch (error) {
@@ -109,7 +224,7 @@ export const signup = catchAsync(async (req, res, next) => {
     // Generate JWT token
     const token = signToken(newUser._id);
     res.status(201).json({
-      status: 'success',
+      status: "success",
       data: { user: newUser },
       token,
     });
@@ -117,33 +232,36 @@ export const signup = catchAsync(async (req, res, next) => {
     // Handle duplicate key errors
     if (err.code === 11000) {
       if (err.keyPattern && err.keyPattern.email) {
-        return res.status(400).json({ 
-          status: 'fail', 
-          message: 'This email address is already registered. Please use a different email or try logging in.' 
+        return res.status(400).json({
+          status: "fail",
+          message:
+            "This email address is already registered. Please use a different email or try logging in.",
         });
       }
       if (err.keyPattern && err.keyPattern.phoneNo) {
-        return res.status(400).json({ 
-          status: 'fail', 
-          message: 'This phone number is already registered. Please use a different phone number.' 
+        return res.status(400).json({
+          status: "fail",
+          message:
+            "This phone number is already registered. Please use a different phone number.",
         });
       }
       // Generic duplicate key error
-      return res.status(400).json({ 
-        status: 'fail', 
-        message: 'This information is already registered. Please check your email and phone number.' 
-      });
-    }
-    
-    // Handle validation errors
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({
-        status: 'fail',
-        message: errors.join('. ')
+        status: "fail",
+        message:
+          "This information is already registered. Please check your email and phone number.",
       });
     }
-    
+
+    // Handle validation errors
+    if (err.name === "ValidationError") {
+      const errors = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({
+        status: "fail",
+        message: errors.join(". "),
+      });
+    }
+
     return next(err);
   }
 });
@@ -156,7 +274,9 @@ export const signup = catchAsync(async (req, res, next) => {
 export const login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
 
-  logger.info(`Login attempt received for email: ${email}`, { requestBody: req.body });
+  logger.info(`Login attempt received for email: ${email}`, {
+    requestBody: req.body,
+  });
 
   if (!email || !password) {
     return next(new AppError("Please provide email and password!", 400));
@@ -177,16 +297,23 @@ export const login = catchAsync(async (req, res, next) => {
   logger.info(`User found for login attempt: ${user.email}, ID: ${user._id}`);
 
   if (!user.isEmailVerified) {
-    return res.status(401).json({ status: 'fail', message: 'Please verify your email before logging in.' });
+    return res
+      .status(401)
+      .json({
+        status: "fail",
+        message: "Please verify your email before logging in.",
+      });
   }
 
   logger.info(`User logged in successfully: ${user.email}`);
   // createSendToken now handles sending the token, user data, AND the onboarding redirect signal
   const token = signToken(user._id);
   res.status(200).json({
-    status: 'success',
+    status: "success",
     data: { user, token },
-    redirectToOnboarding: user.role.includes('provider') ? '/onboarding/provider' : '/onboarding/tasker',
+    redirectToOnboarding: user.role.includes("provider")
+      ? "/onboarding/provider"
+      : "/onboarding/tasker",
   });
 });
 
@@ -196,8 +323,10 @@ export const login = catchAsync(async (req, res, next) => {
  * @access Public
  */
 export const logout = (req, res) => {
-  console.log('Logout route hit');
-  res.status(200).json({ status: 'success', message: 'Logged out successfully.' });
+  console.log("Logout route hit");
+  res
+    .status(200)
+    .json({ status: "success", message: "Logged out successfully." });
 };
 
 /**
@@ -286,7 +415,7 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
   logger.info(`Email verified successfully for user ${user._id}`);
 
   // Redirect to frontend login page after successful verification
-  return res.redirect(302, 'http://localhost:3000/login');
+  return res.redirect(302, "http://localhost:3000/login");
 });
 
 /**
@@ -296,20 +425,25 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 export const resendVerificationEmail = catchAsync(async (req, res, next) => {
   const { email } = req.body;
   if (!email) {
-    return next(new AppError('Please provide your email address.', 400));
+    return next(new AppError("Please provide your email address.", 400));
   }
   const user = await User.findOne({ email });
   if (!user) {
     // For security, do not reveal if user exists
-    return res.status(200).json({ status: 'success', message: 'If that email exists, a verification link has been sent.' });
+    return res
+      .status(200)
+      .json({
+        status: "success",
+        message: "If that email exists, a verification link has been sent.",
+      });
   }
   if (user.isEmailVerified) {
-    return next(new AppError('Your email is already verified.', 400));
+    return next(new AppError("Your email is already verified.", 400));
   }
   await sendVerificationEmail(user, req);
   res.status(200).json({
-    status: 'success',
-    message: 'Verification email resent. Please check your inbox.',
+    status: "success",
+    message: "Verification email resent. Please check your inbox.",
   });
 });
 
@@ -338,37 +472,170 @@ export const updatePassword = catchAsync(async (req, res, next) => {
 export const forgotPassword = catchAsync(async (req, res, next) => {
   const { email } = req.body;
   if (!email) {
-    return next(new AppError('Please provide your email address.', 400));
+    return next(new AppError("Please provide your email address.", 400));
   }
   const user = await User.findOne({ email });
   if (!user) {
     // For security, do not reveal if user exists
-    return res.status(200).json({ status: 'success', message: 'If that email exists, a reset link has been sent.' });
+    return res
+      .status(200)
+      .json({
+        status: "success",
+        message: "If that email exists, a reset link has been sent.",
+      });
   }
   const resetToken = user.createPasswordResetToken();
   await user.save({ validateBeforeSave: false });
-  const resetURL = `${req.protocol}://${req.get('host')}/api/v1/users/resetPassword/${resetToken}`;
-  const message = `Forgot your password? Reset it here: ${resetURL}\nIf you didn't request this, ignore this email.`;
+  const apiResetURL = `${req.protocol}://${req.get(
+    "host"
+  )}/api/v1/users/resetPassword/${resetToken}`;
+
+  // Use FRONTEND_URL from environment if available, otherwise construct from request
+  const frontendBaseURL =
+    process.env.FRONTEND_URL ||
+    `${req.protocol}://${req.get("host").replace(/:\d+/, "")}:3000`;
+  const frontendResetURL = `${frontendBaseURL}/reset-password?token=${resetToken}`;
+
+  // Plain text version
+  const message = `Forgot your password? Reset it here: ${apiResetURL}\n\nIf you didn't request this password reset, please ignore this email.`;
+
+  // HTML version with better formatting
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Your Password</title>
+    <style>
+      body { 
+        font-family: Arial, sans-serif; 
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .container {
+        background-color: #f9f9f9;
+        border-radius: 8px;
+        padding: 30px;
+        border: 1px solid #e0e0e0;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .logo {
+        max-width: 150px;
+        margin-bottom: 20px;
+      }
+      h1 {
+        color: #00aaba;
+        margin-bottom: 20px;
+        font-size: 24px;
+      }
+      .button {
+        display: inline-block;
+        background-color: #00aaba;
+        color: white !important;
+        text-decoration: none;
+        padding: 12px 30px;
+        border-radius: 4px;
+        font-weight: bold;
+        margin: 20px 0;
+        text-align: center;
+      }
+      .button:hover {
+        background-color: #008b8b;
+      }
+      .footer {
+        margin-top: 30px;
+        font-size: 12px;
+        color: #666;
+        text-align: center;
+      }
+      .url-display {
+        word-break: break-all;
+        background-color: #f0f0f0;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin: 15px 0;
+      }
+      .expiry {
+        font-weight: bold;
+        color: #d99633;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <img src="${frontendBaseURL}/assets/gygg-logo.svg" alt="Gygg Platform Logo" class="logo">
+        <h1>Password Reset Request</h1>
+      </div>
+      
+      <p>We received a request to reset your password. To reset your password, please click the button below:</p>
+      
+      <div style="text-align: center;">
+        <a href="${apiResetURL}" class="button">Reset My Password</a>
+      </div>
+      
+      <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+      <div class="url-display">${apiResetURL}</div>
+      
+      <p class="expiry">This link will expire in 10 minutes.</p>
+      
+      <p>If you didn't request a password reset, please ignore this email or contact support if you have concerns.</p>
+      
+      <div class="footer">
+        <p>&copy; ${new Date().getFullYear()} Gygg Platform. All rights reserved.</p>
+        <p>This is an automated message, please do not reply to this email.</p>
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+
   try {
-    await sendEmail({ email: user.email, subject: 'Password Reset', message });
-    res.status(200).json({ status: 'success', message: 'If that email exists, a reset link has been sent.' });
+    await sendEmail({
+      email: user.email,
+      subject: "Gygg Platform - Password Reset",
+      message,
+      html,
+    });
+    res
+      .status(200)
+      .json({
+        status: "success",
+        message: "If that email exists, a reset link has been sent.",
+      });
   } catch (err) {
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await user.save({ validateBeforeSave: false });
-    return next(new AppError('There was an error sending the email. Try again later.', 500));
+    return next(
+      new AppError(
+        "There was an error sending the email. Try again later.",
+        500
+      )
+    );
   }
 });
 
 // --- Reset Password ---
 export const resetPassword = catchAsync(async (req, res, next) => {
-  const hashedToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(req.params.token)
+    .digest("hex");
   const user = await User.findOne({
     passwordResetToken: hashedToken,
     passwordResetExpires: { $gt: Date.now() },
   });
   if (!user) {
-    return next(new AppError('Token is invalid or has expired.', 400));
+    return next(new AppError("Token is invalid or has expired.", 400));
   }
   user.password = req.body.password;
   user.passwordConfirm = req.body.passwordConfirm;

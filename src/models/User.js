@@ -73,10 +73,10 @@ const userSchema = new mongoose.Schema(
       validate: {
         validator: function(v) {
           if (!v) return false; // Don't allow empty values since it's required
-          // E.164 format: + followed by 8 to 15 digits
-          return /^\+\d{8,15}$/.test(v);
+          // Simplified validation - just make sure it starts with +1
+          return /^\+1\d+$/.test(v);
         },
-        message: props => `${props.value} is not a valid international phone number format (E.164, e.g., +14165551234, +919876543210, +441234567890).`
+        message: props => `${props.value} is not a valid phone number. Phone number must start with +1.`
       }
     },
 

@@ -93,7 +93,7 @@ const options = {
             },
             phoneNo: {
               type: 'string',
-              pattern: '^\\+\\d{8,15}$'
+              pattern: '^\\+1\\d+$'
             },
             role: {
               type: 'array',

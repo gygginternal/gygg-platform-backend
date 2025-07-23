@@ -19,8 +19,8 @@ export const commonValidations = {
   
   phoneNumber: (field = 'phoneNo') =>
     body(field)
-      .matches(/^\+\d{8,15}$/)
-      .withMessage('Phone number must be in international E.164 format (e.g., +14165551234)'),
+      .matches(/^\+1\d+$/)
+      .withMessage('Phone number must start with +1'),
   
   pagination: () => [
     query('page').optional().isInt({ min: 1 }).toInt(),

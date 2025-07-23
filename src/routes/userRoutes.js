@@ -137,11 +137,11 @@ const signupValidation = [
     body('role').optional().isArray().withMessage('Role must be an array'),
     body('role.*').isIn(['tasker', 'provider']).withMessage('Invalid role specified'),
     
-    // *** PHONE NUMBER VALIDATION - E.164 international format ***
+    // *** PHONE NUMBER VALIDATION - Simplified ***
     body('phoneNo')
       .notEmpty().withMessage('Phone number is required')
-      .matches(/^\+\d{8,15}$/)
-      .withMessage('Phone number must be in international E.164 format (e.g., +14165551234, +919876543210, +441234567890).'),
+      .matches(/^\+1\d+$/)
+      .withMessage('Phone number must start with +1'),
 
     body('dateOfBirth').notEmpty().withMessage('Date of Birth is required').isISO8601().toDate().withMessage('Invalid date of birth. Use YYYY-MM-DD.'),
 ];
@@ -297,11 +297,11 @@ const updateMeValidation = [
     // Text fields
     body('firstName').optional().trim().escape(),
     body('lastName').optional().trim().escape(),
-    // *** PHONE NUMBER VALIDATION - E.164 international format ***
+    // *** PHONE NUMBER VALIDATION - Simplified ***
     body('phoneNo')
       .optional({ checkFalsy: true })
-      .matches(/^\+\d{8,15}$/)
-      .withMessage('Phone number must be in international E.164 format (e.g., +14165551234, +919876543210, +441234567890).'),
+      .matches(/^\+1\d+$/)
+      .withMessage('Phone number must start with +1'),
       
     body('bio').optional().trim().escape().isLength({ max: 750 }).withMessage('Bio cannot exceed 750 characters'),
     // Arrays (controller handles string to array conversion if needed from FormData)
