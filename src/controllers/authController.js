@@ -92,8 +92,8 @@ const sendVerificationEmail = async (user, req) => {
   // HTML version with better formatting
   const html = `
   <!DOCTYPE html>
-<html lang="en">
-<head>
+  <html lang="en">
+  <head>
   <meta charset="UTF-8">
   <title>Verify your email address - GYGG Platform.</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -630,100 +630,213 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
   // HTML version with better formatting
   const html = `
   <!DOCTYPE html>
-  <html>
+  <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reset Your Password</title>
-    <style>
-      body { 
-        font-family: Arial, sans-serif; 
-        line-height: 1.6;
-        color: #333;
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 20px;
+  <meta charset="UTF-8">
+  <title>Password Reset Request - GYGG Platform</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    body {
+      min-height: 100vh;
+      width: 100vw;
+      background-color: #00aaba;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      overflow-x: hidden;
+      box-sizing: border-box;
+    }
+    .page-wrapper {
+      position: relative;
+      width: 100%;
+      padding-top: 16rem;
+    }
+    .email-card {
+      position: relative;
+      background: #fff;
+      width: 100%;
+      margin:auto;
+      max-width: 32rem;
+      border-radius: 1.5rem;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.12);
+      z-index: 10;
+      overflow: hidden;
+    }
+    .gold-heading {
+      color: #da9a3d;
+      font-weight: 900;
+    }
+    .card-body {
+      padding: 2.5rem 1.5rem 2rem;
+      text-align: center;
+    }
+    .icon-area {
+      background-color: #eff6ff;
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin-bottom: 2rem;
+    }
+    .email-icon {
+      width: 12rem;
+      height: 6rem;
+      margin: auto;
+      display: block;
+    }
+    .card-body h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 0.75rem;
+    }
+    .card-body .instructions {
+      color: #6b7280;
+      margin-bottom: 1.5rem;
+    }
+    .reset-button {
+      display: inline-block;
+      box-sizing: border-box;
+      width: 100%;
+      background: #00aaba;
+      color: #fff;
+      font-weight: 700;
+      padding: 0.75rem 3rem;
+      border: none;
+      border-radius: 999px;
+      box-shadow: 0 4px 20px rgba(49, 88, 190, 0.14);
+      cursor: pointer;
+      font-size: 1.05rem;
+      text-decoration: none;
+      transition: all 0.3s cubic-bezier(.4,0,.2,1);
+      margin-bottom: 1.5rem;
+      margin-top: 1rem;
+    }
+    .reset-button:hover {
+      background: #008b8b;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(49, 88, 190, 0.18);
+    }
+    .url-display {
+      word-break: break-all;
+      background-color: #f0f0f0;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 14px;
+      margin: 15px 0;
+    }
+    .expiry-notice {
+      font-weight: bold;
+      color: #d99633;
+    }
+    .card-body .disclaimer {
+      color: #9ca3af;
+      font-size: 0.875rem;
+      margin-top: 2rem;
+    }
+    .card-footer {
+      background-color: #f9fafb;
+      padding: 1rem 1.5rem;
+      border-top: 1px solid #e5e7eb;
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.75rem;
+    }
+    @media (min-width: 768px) {
+      .card-body {
+        padding-left: 3rem;
+        padding-right: 3rem;
       }
-      .container {
-        background-color: #f9f9f9;
-        border-radius: 8px;
-        padding: 30px;
-        border: 1px solid #e0e0e0;
+      .card-body h1 {
+        font-size: 1.875rem;
       }
-      .header {
-        text-align: center;
-        margin-bottom: 30px;
+      .card-footer {
+        padding-left: 3rem;
+        padding-right: 3rem;
       }
-      .logo {
-        max-width: 150px;
-        margin-bottom: 20px;
-      }
-      h1 {
-        color: #00aaba;
-        margin-bottom: 20px;
-        font-size: 24px;
-      }
-      .button {
-        display: inline-block;
-        background-color: #00aaba;
-        color: white !important;
-        text-decoration: none;
-        padding: 12px 30px;
-        border-radius: 4px;
-        font-weight: bold;
-        margin: 20px 0;
-        text-align: center;
-      }
-      .button:hover {
-        background-color: #008b8b;
-      }
-      .footer {
-        margin-top: 30px;
-        font-size: 12px;
-        color: #666;
-        text-align: center;
-      }
-      .url-display {
-        word-break: break-all;
-        background-color: #f0f0f0;
-        padding: 10px;
-        border-radius: 4px;
-        font-size: 14px;
-        margin: 15px 0;
-      }
-      .expiry {
-        font-weight: bold;
-        color: #d99633;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <img src="${frontendBaseURL}/assets/gygg-logo.svg" alt="Gygg Platform Logo" class="logo">
-        <h1>Password Reset Request</h1>
+    }
+    /* Decorative SVG shapes reused */
+    .absolute { position: absolute; }
+    .-top-10 { top: -2.5rem; }
+    .-left-20 { left: -5rem; }
+    .-bottom-20 { bottom: -5rem; }
+    .-right-20 { right: -5rem; }
+    .-right-24 { right: -6rem; }
+    .top-1\/2 { top: 50%; }
+    .bottom-5 { bottom: 1.25rem; }
+    .right-5 { right: 1.25rem; }
+    .-rotate-45 { transform: rotate(-45deg); }
+    .rotate-45 { transform: rotate(45deg); }
+    .rotate-12 { transform: rotate(12deg); }
+    .-rotate-12 { transform: rotate(-12deg); }
+    .w-24 { width: 6rem; }
+    .h-32 { height: 8rem; }
+    .w-48 { width: 12rem; }
+    .h-48 { height: 12rem; }
+    .w-80 { width: 20rem; }
+    .h-80 { height: 20rem; }
+    /* Utility classes for spacing/text/color */
+    .mb-1-5 { margin-bottom: 1.5rem; }
+    .mt-1 { margin-top: 1rem; }
+    .mb-2 { margin-bottom: 2rem; }
+    .mb-0-75 { margin-bottom: 0.75rem; }
+    .text-center { text-align: center; }
+    .text-color-primary { color: #00aaba; font-weight: 600; }
+  </style>
+</head>
+<body>
+<main class="page-wrapper">
+  <!-- Background Decorations -->
+  <svg class="absolute -top-10 -left-20 w-80 h-80 -rotate-45" viewBox="0 0 100 60" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 5C0 2.23858 2.23858 0 5 0H95C97.7614 0 100 2.23858 100 5V55C100 57.7614 97.7614 60 95 60H5C2.23858 60 0 57.7614 0 55V5Z" fill="white" fill-opacity="0.1"/><path d="M100 5L50 32.5L0 5" stroke="white" stroke-opacity="0.2" stroke-width="2"/></svg>
+  <svg class="absolute -bottom-20 -right-20 w-80 h-80 rotate-45" viewBox="0 0 100 60" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 5C0 2.23858 2.23858 0 5 0H95C97.7614 0 100 2.23858 100 5V55C100 57.7614 97.7614 60 95 60H5C2.23858 60 0 57.7614 0 55V5Z" fill="white" fill-opacity="0.1"/><path d="M100 5L50 32.5L0 5" stroke="white" stroke-opacity="0.2" stroke-width="2"/></svg>
+  <svg class="absolute top-1/2 -right-24 w-48 h-48 rotate-12" viewBox="0 0 100 60" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 5C0 2.23858 2.23858 0 5 0H95C97.7614 0 100 2.23858 100 5V55C100 57.7614 97.7614 60 95 60H5C2.23858 60 0 57.7614 0 55V5Z" fill="white" fill-opacity="0.1"/><path d="M100 5L50 32.5L0 5" stroke="white" stroke-opacity="0.2" stroke-width="2"/></svg>
+  <svg class="absolute bottom-5 right-5 w-24 h-32 -rotate-12" viewBox="0 0 100 120" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 10C5 4.47715 9.47715 0 15 0H85C90.5228 0 95 4.47715 95 10V70H5V10Z" fill="white" fill-opacity="0.1"/><path d="M70 30L70 40" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="5" stroke-linecap="round"/><rect x="45" y="65" width="10" height="55" rx="2" fill="white" fill-opacity="0.1"/><path d="M100 85H0" stroke="white" stroke-opacity="0.1" stroke-width="10"/><path d="M85 0L85 20" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="8" stroke-linecap="round"/></svg>
+  <div class="email-card">
+    <div class="card-body">
+      <div class="icon-area">
+        <svg viewBox="0 0 200 100" class="email-icon" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="paperGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#f0f9ff" stop-opacity="1" />
+              <stop offset="100%" stop-color="#e0f2fe" stop-opacity="1" />
+            </linearGradient>
+          </defs>
+          <path d="M20 35 H180 V85 H20 Z" fill="#93c5fd" />
+          <path d="M20 35 L100 65 L180 35" fill="#60a5fa" />
+          <path d="M35 45 H165 V10 H35 Z" fill="url(#paperGradient)" stroke="#93C5FD" stroke-width="1" transform="rotate(-5 100 47.5)" />
+          <path d="M50 22 H150 M50 28 H150 M50 34 H120" stroke="#dbeafe" stroke-width="1.5" transform="rotate(-5 100 47.5)" />
+        </svg>
       </div>
-      
-      <p>We received a request to reset your password. To reset your password, please click the button below:</p>
-      
-      <div style="text-align: center;">
-        <a href="${apiResetURL}" class="button">Reset My Password</a>
-      </div>
-      
-      <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+      <h1>Password Reset Request</h1>
+      <p class="instructions">
+        We received a request to reset your password for your <span class="gold-heading">GYGG Platform</span> account.
+        To reset your password, please click the button below:
+      </p>
+      <a href="${apiResetURL}" class="reset-button mt-1 mb-1-5">Reset My Password</a>
+      <p class="instructions mb-1-5">
+        If the button doesn't work, you can copy and paste this link into your browser:
+      </p>
       <div class="url-display">${apiResetURL}</div>
-      
-      <p class="expiry">This link will expire in 10 minutes.</p>
-      
-      <p>If you didn't request a password reset, please ignore this email or contact support if you have concerns.</p>
-      
-      <div class="footer">
-        <p>&copy; ${new Date().getFullYear()} Gygg Platform. All rights reserved.</p>
-        <p>This is an automated message, please do not reply to this email.</p>
-      </div>
+      <p class="expiry-notice">This link will expire in 10 minutes.</p>
+      <p class="disclaimer">
+        If you didn't request a password reset, you can safely ignore this email or contact support if you have concerns.
+      </p>
     </div>
-  </body>
-  </html>
+    <div class="card-footer">
+      <p>© ${new Date().getFullYear()} Gygg Platform. All rights reserved.</p>
+      <p>This is an automated message, please do not reply to this email.</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>
   `;
 
   try {
