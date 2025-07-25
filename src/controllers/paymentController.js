@@ -12,30 +12,53 @@ import notifyAdmin from '../utils/notifyAdmin.js';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
 import { generateInvoicePdf } from '../utils/invoicePdf.js';
+import { 
+  logPaymentEvent, 
+  logWebhookEvent, 
+  logError, 
+  logSuspiciousActivity,
+  SECURITY_EVENTS 
+} from '../utils/securityLogger.js';
 
 // Initialize Stripe with the secret key from environment variables
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-06-30.basil' });
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
 
 export const getPayments = catchAsync(async (req, res, next) => {
   const { status, payer, payee, page = 1, limit = 10 } = req.query;
-  console.log({ limit, page });
+  
+  // Security: Validate and sanitize input parameters
+  const pageNumber = Math.max(1, parseInt(page, 10) || 1);
+  const pageLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10)); // Max 100 per page
+  
+  // Security: Only allow users to see their own payments unless admin
+  const userId = req.user.id;
+  const isAdmin = req.user.role.includes('admin');
+  
+  if (!isAdmin && payer && payer !== userId && payee && payee !== userId) {
+    return next(new AppError('You can only view your own payments', 403));
+  }
 
-  // Build the query object
+  // Build the query object with security constraints
   const query = {};
 
   query.status = "succeeded"; // Filter by payment status
 
-  if (payer) {
-    query.payer = payer; // Filter by payer ID
+  // Security: Restrict query based on user role
+  if (!isAdmin) {
+    query.$or = [
+      { payer: userId },
+      { payee: userId }
+    ];
+  } else {
+    // Admin can filter by specific payer/payee
+    if (payer) {
+      query.payer = payer;
+    }
+    if (payee) {
+      query.payee = payee;
+    }
   }
 
-  if (payee) {
-    query.payee = payee; // Filter by payee ID
-  }
-
-  // Pagination parameters
-  const pageNumber = parseInt(page, 10) || 1; // Default to page 1
-  const pageLimit = parseInt(limit, 10) || 10; // Default to 10 results per page
   const skip = (pageNumber - 1) * pageLimit;
 
   // Fetch payments based on the query with pagination
@@ -44,7 +67,8 @@ export const getPayments = catchAsync(async (req, res, next) => {
     .populate("payer", "firstName lastName email") // Populate payer details
     .populate("payee", "firstName lastName email") // Populate payee details
     .skip(skip)
-    .limit(pageLimit);
+    .limit(pageLimit)
+    .lean(); // Use lean for better performance
 
   // Get the total count of payments for the query
   const totalPayments = await Payment.countDocuments(query);
@@ -141,7 +165,12 @@ export const getPaymentIntentForContract = catchAsync(
 
     // Retrieve the payment intent from the database or payment provider (e.g., Stripe)
     const payment = await Payment.findOne({ contract: contractId });
-    console.log({ payment });
+    
+    // Security: Log payment access
+    logPaymentEvent(SECURITY_EVENTS.DATA_ACCESS, payment?._id, req.user.id, payment?.amount, {
+      action: 'payment_intent_retrieved',
+      contractId
+    });
 
     if (!payment) {
       return next(new AppError("Payment not found for this contract.", 404));
@@ -228,7 +257,13 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
       paymentIntent,
     });
   } catch (error) {
-    console.error("Error releasing payment:", error);
+    logError(error, {
+      action: 'release_payment_failed',
+      contractId,
+      providerId,
+      paymentId: payment._id
+    });
+    
     return next(
       new AppError(
         `Failed to release payment: ${error.message}`,
@@ -352,7 +387,6 @@ export const createPaymentIntentForContract = catchAsync(
       application_fee_amount: payment.applicationFeeAmount,
       transfer_data: { destination: taskerStripeAccountId },
       customer: stripeCustomerId,
-      automatic_tax: { enabled: true },
       metadata: {
         paymentId: payment._id.toString(),
         contractId: contractId.toString(),
@@ -360,6 +394,16 @@ export const createPaymentIntentForContract = catchAsync(
         taskerId: contract.tasker._id.toString(),
       },
     };
+
+    // Add automatic tax only if customer has address information
+    if (provider.address && provider.address.country) {
+      paymentIntentParams.automatic_tax = { enabled: true };
+    } else {
+      logger.info("Automatic tax disabled: Customer address not available", {
+        providerId,
+        contractId
+      });
+    }
 
     let paymentIntent;
     if (payment.stripePaymentIntentId) {
@@ -373,20 +417,77 @@ export const createPaymentIntentForContract = catchAsync(
           error.code === "payment_intent_unexpected_state" ||
           error.code === "resource_missing"
         ) {
-          paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+          // Try creating new PaymentIntent, with fallback for automatic_tax
+          try {
+            paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+          } catch (createError) {
+            if (createError.message && createError.message.includes('automatic_tax')) {
+              logger.info("Automatic tax not supported, creating PaymentIntent without it", {
+                providerId,
+                contractId
+              });
+              const { automatic_tax, ...paramsWithoutTax } = paymentIntentParams;
+              paymentIntent = await stripe.paymentIntents.create(paramsWithoutTax);
+            } else {
+              throw createError;
+            }
+          }
           payment.stripePaymentIntentId = paymentIntent.id;
+        } else if (error.message && error.message.includes('automatic_tax')) {
+          logger.info("Automatic tax not supported, updating PaymentIntent without it", {
+            providerId,
+            contractId
+          });
+          const { automatic_tax, ...paramsWithoutTax } = paymentIntentParams;
+          paymentIntent = await stripe.paymentIntents.update(
+            payment.stripePaymentIntentId,
+            paramsWithoutTax
+          );
         } else {
+          logError(error, {
+            action: 'stripe_payment_intent_update_failed',
+            providerId,
+            contractId,
+            paymentIntentId: payment.stripePaymentIntentId
+          });
           throw error;
         }
       }
     } else {
-      paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-      payment.stripePaymentIntentId = paymentIntent.id;
-      payment.stripePaymentIntentSecret = paymentIntent.client_secret;
+      try {
+        paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+        payment.stripePaymentIntentId = paymentIntent.id;
+        payment.stripePaymentIntentSecret = paymentIntent.client_secret;
+      } catch (error) {
+        if (error.message && error.message.includes('automatic_tax')) {
+          logger.info("Automatic tax not supported, creating PaymentIntent without it", {
+            providerId,
+            contractId
+          });
+          const { automatic_tax, ...paramsWithoutTax } = paymentIntentParams;
+          paymentIntent = await stripe.paymentIntents.create(paramsWithoutTax);
+          payment.stripePaymentIntentId = paymentIntent.id;
+          payment.stripePaymentIntentSecret = paymentIntent.client_secret;
+        } else {
+          logError(error, {
+            action: 'stripe_payment_intent_creation_failed',
+            providerId,
+            contractId
+          });
+          throw error;
+        }
+      }
     }
 
     payment.status = "requires_payment_method";
     await payment.save();
+
+    // Log payment creation
+    logPaymentEvent(SECURITY_EVENTS.PAYMENT_CREATED, payment._id, providerId, payment.amount, {
+      contractId,
+      taskerId: contract.tasker._id.toString(),
+      applicationFeeAmount: payment.applicationFeeAmount
+    });
 
     // Contract breakdown will be updated after payment confirmation (webhook)
 
@@ -407,7 +508,10 @@ const handlePayoutPaid = async (dataObject) => {
     const payment = await Payment.findOne({ stripePayoutId: payoutId });
 
     if (!payment) {
-      console.error(`❌ Payment record not found for payout ID: ${payoutId}`);
+      logError(new Error('Payment record not found for payout'), {
+        payoutId,
+        event: 'payout.paid'
+      });
       return;
     }
 
@@ -415,11 +519,15 @@ const handlePayoutPaid = async (dataObject) => {
     payment.status = "succeeded";
     await payment.save();
 
-    console.log(
-      `✅ Payment status updated to "succeeded" for payout ID: ${payoutId}`
-    );
+    logPaymentEvent(SECURITY_EVENTS.PAYMENT_CREATED, payment._id, payment.payee, payment.amount, {
+      event: 'payout_paid',
+      payoutId
+    });
   } catch (error) {
-    console.error(`❌ Error handling payout.paid event: ${error.message}`);
+    logError(error, {
+      event: 'payout.paid',
+      payoutId: dataObject.id
+    });
   }
 };
 
@@ -431,17 +539,14 @@ const handleChargeRefunded = async (dataObject) => {
     const paymentIntentId = charge.payment_intent;
 
     if (!paymentIntentId) {
-      console.log("No PaymentIntent associated with this charge.");
+      logger.info("No PaymentIntent associated with this charge", {
+        chargeId: charge.id
+      });
       return;
     }
 
-    console.log(
-      `Refunded charge was linked to PaymentIntent: ${paymentIntentId}`
-    );
-
     // Fetch the PaymentIntent from Stripe
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    console.log(`PaymentIntent status: ${paymentIntent.status}`);
 
     // Find the payment record in the database
     const payment = await Payment.findOne({
@@ -449,9 +554,10 @@ const handleChargeRefunded = async (dataObject) => {
     });
 
     if (!payment) {
-      console.error(
-        `❌ Payment record not found for PaymentIntent: ${paymentIntentId}`
-      );
+      logError(new Error('Payment record not found for refund'), {
+        paymentIntentId,
+        event: 'charge.refunded'
+      });
       return;
     }
 
@@ -459,9 +565,10 @@ const handleChargeRefunded = async (dataObject) => {
     payment.status = "refunded";
     await payment.save();
 
-    console.log(
-      `✅ Payment status updated to "refunded" for PaymentIntent: ${paymentIntentId}`
-    );
+    logPaymentEvent(SECURITY_EVENTS.PAYMENT_REFUNDED, payment._id, payment.payer, payment.amount, {
+      paymentIntentId,
+      event: 'charge_refunded'
+    });
 
     // Find the associated contract and gig
     const contract = await Contract.findById(payment.contract);
@@ -471,21 +578,28 @@ const handleChargeRefunded = async (dataObject) => {
       // Update the contract status to "cancelled"
       contract.status = "cancelled";
       await contract.save();
-      console.log(
-        `✅ Contract status updated to "cancelled" for Contract ID: ${contract._id}`
-      );
+      
+      logger.info('Contract cancelled due to refund', {
+        contractId: contract._id,
+        paymentIntentId
+      });
     }
 
     if (gig) {
       // Update the gig status to "cancelled"
       gig.status = "cancelled";
       await gig.save();
-      console.log(
-        `✅ Gig status updated to "cancelled" for Gig ID: ${gig._id}`
-      );
+      
+      logger.info('Gig cancelled due to refund', {
+        gigId: gig._id,
+        paymentIntentId
+      });
     }
   } catch (error) {
-    console.error(`❌ Error handling charge.refunded event: ${error.message}`);
+    logError(error, {
+      event: 'charge.refunded',
+      chargeId: dataObject.id
+    });
   }
 };
 
@@ -497,9 +611,17 @@ export const stripeWebhookHandler = async (req, res) => {
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    console.log("receiving webhook event", JSON.stringify(event, null, 2));
+    
+    logWebhookEvent(event.type, true, {
+      eventId: event.id,
+      created: event.created
+    });
   } catch (err) {
-    console.error(`❌ Webhook signature verification failed: ${err.message}`);
+    logWebhookEvent('unknown', false, {
+      error: err.message,
+      signature: sig ? 'present' : 'missing'
+    });
+    
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -533,7 +655,10 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
     });
 
     if (!payment) {
-      console.error(`❌ Payment not found for PaymentIntent: ${paymentIntent.id}`);
+      logError(new Error('Payment not found for PaymentIntent'), {
+        paymentIntentId: paymentIntent.id,
+        event: 'payment_intent.succeeded'
+      });
       return;
     }
 
@@ -567,9 +692,15 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
       await contract.save();
     }
 
-    console.log(`✅ Payment succeeded for PaymentIntent: ${paymentIntent.id}`);
+    logPaymentEvent(SECURITY_EVENTS.PAYMENT_CREATED, payment._id, payment.payee, payment.amount, {
+      event: 'payment_intent_succeeded',
+      paymentIntentId: paymentIntent.id
+    });
   } catch (error) {
-    console.error(`❌ Error handling payment_intent.succeeded: ${error.message}`);
+    logError(error, {
+      event: 'payment_intent.succeeded',
+      paymentIntentId: paymentIntent.id
+    });
   }
 };
 
@@ -581,7 +712,10 @@ const handlePaymentIntentCanceled = async (paymentIntent) => {
     });
 
     if (!payment) {
-      console.error(`❌ Payment not found for PaymentIntent: ${paymentIntent.id}`);
+      logError(new Error('Payment not found for PaymentIntent'), {
+        paymentIntentId: paymentIntent.id,
+        event: 'payment_intent.canceled'
+      });
       return;
     }
 
@@ -596,9 +730,15 @@ const handlePaymentIntentCanceled = async (paymentIntent) => {
       await contract.save();
     }
 
-    console.log(`✅ Payment canceled for PaymentIntent: ${paymentIntent.id}`);
+    logger.info('Payment canceled', {
+      paymentId: payment._id,
+      paymentIntentId: paymentIntent.id
+    });
   } catch (error) {
-    console.error(`❌ Error handling payment_intent.canceled: ${error.message}`);
+    logError(error, {
+      event: 'payment_intent.canceled',
+      paymentIntentId: paymentIntent.id
+    });
   }
 };
 
@@ -633,9 +773,11 @@ export const refundPaymentForContract = catchAsync(async (req, res, next) => {
     const refund = await stripe.refunds.create({
       charge: chargeId,
     });
-    console.log(
-      `Stripe Refund created: ${refund.id}, Status: ${refund.status}`
-    );
+    logPaymentEvent(SECURITY_EVENTS.PAYMENT_REFUNDED, payment._id, req.user.id, payment.amount, {
+      refundId: refund.id,
+      refundStatus: refund.status,
+      contractId
+    });
 
     // Update payment and contract status
 
@@ -651,10 +793,13 @@ export const refundPaymentForContract = catchAsync(async (req, res, next) => {
       refundId: refund.id,
     });
   } catch (error) {
-    console.error(
-      `❌ Error creating Stripe Refund for Charge ${payment.stripeChargeId}:`,
-      error
-    );
+    logError(error, {
+      action: 'stripe_refund_creation_failed',
+      contractId,
+      paymentId: payment._id,
+      chargeId
+    });
+    
     return next(
       new AppError(`Failed to initiate refund: ${error.message}.`, 500)
     );
@@ -695,7 +840,12 @@ export const createStripeAccount = catchAsync(async (req, res, next) => {
     await user.save({ validateBeforeSave: false });
     return createStripeAccountLink(req, res, next);
   } catch (error) {
-    console.error("Error creating Stripe account:", error);
+    logError(error, {
+      action: 'stripe_account_creation_failed',
+      userId: req.user.id,
+      email: user.email
+    });
+    
     return next(new AppError("Could not create Stripe account.", 500));
   }
 });
@@ -738,10 +888,12 @@ export const createStripeAccountLink = catchAsync(async (req, res, next) => {
 
     res.status(200).json({ status: "success", url: accountLink.url });
   } catch (error) {
-    console.error(
-      `Error creating Account Link for ${user.stripeAccountId}:`,
-      error
-    );
+    logError(error, {
+      action: 'stripe_account_link_creation_failed',
+      userId: user._id,
+      stripeAccountId: user.stripeAccountId
+    });
+    
     return next(new AppError("Could not create onboarding link.", 500));
   }
 });
@@ -774,10 +926,11 @@ export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
         account.capabilities.transfers === "active" ? "active" : "incomplete",
     });
   } catch (error) {
-    console.error(
-      `Error retrieving Stripe account ${user.stripeAccountId}:`,
-      error
-    );
+    logError(error, {
+      action: 'stripe_account_retrieval_failed',
+      userId: user._id,
+      stripeAccountId: user.stripeAccountId
+    });
     
     // Handle specific Stripe errors
     if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
