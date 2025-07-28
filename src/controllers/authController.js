@@ -20,19 +20,18 @@ const signToken = (userId) => {
 };
 
 /**
- * Creates and sends a JWT token in a cookie response with enhanced security.
+ * Creates and sends a JWT token in a cookie response.
  * @param {Object} user - The user object.
  * @param {number} statusCode - The HTTP status code for the response.
  * @param {Object} res - The Express response object.
- * @param {string} redirectToOnboarding - Optional onboarding redirect path.
  */
-const createSendToken = (user, statusCode, res, redirectToOnboarding = null) => {
+const createSendToken = (user, statusCode, res) => {
   const token = signToken(user._id);
 
   const cookieOptions = {
     expires: new Date(
       Date.now() +
-        parseInt(process.env.JWT_COOKIE_EXPIRES_IN || "7", 10) *
+        parseInt(process.env.JWT_COOKIE_EXPIRES_IN || "90", 10) *
           24 *
           60 *
           60 *
@@ -40,26 +39,31 @@ const createSendToken = (user, statusCode, res, redirectToOnboarding = null) => 
     ),
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-    path: "/"
   };
 
   res.cookie("jwt", token, cookieOptions);
 
-  // Remove sensitive data from response
   user.password = undefined;
-  user.passwordChangedAt = undefined;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpires = undefined;
+
+  // --- Check for onboarding redirection ---
+  let redirectToOnboardingPath = null;
+  if (user.role.includes("tasker") && !user.isTaskerOnboardingComplete) {
+    redirectToOnboardingPath = "/onboarding/tasker"; // Frontend route for tasker onboarding
+  }
+  // Example: Add a similar check for providers if you have provider-specific onboarding
+  else if (
+    user.role.includes("provider") &&
+    !user.isProviderOnboardingComplete
+  ) {
+    redirectToOnboardingPath = "/onboarding/provider";
+  }
 
   res.status(statusCode).json({
     status: "success",
     token,
     data: {
       user,
-      redirectToOnboarding,
+      redirectToOnboarding: redirectToOnboardingPath, // Send this to the frontend
     },
   });
 };
@@ -391,14 +395,16 @@ export const signup = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Handles user login functionality with enhanced security.
+ * Handles user login functionality.
  * @route POST /api/v1/auth/login
  * @access Public
  */
 export const login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
-  const clientIP = req.ip;
-  const userAgent = req.get('User-Agent');
+
+  logger.info(`Login attempt received for email: ${email}`, {
+    requestBody: req.body,
+  });
 
   if (!email || !password) {
     return next(new AppError("Please provide email and password!", 400));
@@ -410,106 +416,46 @@ export const login = catchAsync(async (req, res, next) => {
   );
 
   if (!user || !(await user.correctPassword(password, user.password))) {
-    logger.warn('Login attempt failed', {
-      email,
-      ip: clientIP,
-      userAgent,
-      reason: 'Invalid credentials',
-      timestamp: new Date().toISOString()
-    });
+    logger.warn(
+      `Login attempt failed for email: ${email} (Incorrect credentials)`
+    );
     return next(new AppError("Incorrect email or password", 401));
   }
 
-  // Check if account is active
-  if (!user.active) {
-    logger.warn('Login attempt on inactive account', {
-      userId: user._id,
-      email,
-      ip: clientIP,
-      userAgent
-    });
-    return next(new AppError("Your account has been deactivated. Please contact support.", 401));
-  }
+  logger.info(`User found for login attempt: ${user.email}, ID: ${user._id}`);
 
-  // Check email verification
   if (!user.isEmailVerified) {
-    logger.info('Login attempt with unverified email', {
-      userId: user._id,
-      email,
-      ip: clientIP
-    });
-    return res.status(401).json({
-      status: "fail",
-      message: "Please verify your email before logging in.",
-    });
+    return res
+      .status(401)
+      .json({
+        status: "fail",
+        message: "Please verify your email before logging in.",
+      });
   }
 
-  // Successful login
-  logger.info('User logged in successfully', {
-    userId: user._id,
-    email: user.email,
-    ip: clientIP,
-    userAgent,
-    timestamp: new Date().toISOString()
+  logger.info(`User logged in successfully: ${user.email}`);
+  // createSendToken now handles sending the token, user data, AND the onboarding redirect signal
+  const token = signToken(user._id);
+  res.status(200).json({
+    status: "success",
+    data: { user, token },
+    redirectToOnboarding: user.role.includes("provider")
+      ? "/onboarding/provider"
+      : "/onboarding/tasker",
   });
-
-  // Determine onboarding redirect
-  let redirectToOnboarding = null;
-  if (user.role.includes("tasker") && !user.isTaskerOnboardingComplete) {
-    redirectToOnboarding = "/onboarding/tasker";
-  } else if (user.role.includes("provider") && !user.isProviderOnboardingComplete) {
-    redirectToOnboarding = "/onboarding/provider";
-  }
-
-  // Create and send token
-  createSendToken(user, 200, res, redirectToOnboarding);
 });
 
 /**
- * Logs the user out by clearing the JWT cookie and blacklisting the token.
- * @route POST /api/v1/auth/logout
+ * Logs the user out by clearing the JWT cookie.
+ * @route GET /api/v1/auth/logout
  * @access Public
  */
-export const logout = catchAsync(async (req, res, next) => {
-  let token;
-
-  // Extract token from Authorization header or cookies
-  if (req.headers.authorization?.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  } else if (req.cookies.jwt) {
-    token = req.cookies.jwt;
-  }
-
-  // If token exists, blacklist it
-  if (token && token !== 'loggedout') {
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const { blacklistToken } = await import('../middleware/jwtBlacklist.js');
-      blacklistToken(token, decoded.exp);
-      
-      logger.info('User logged out successfully', {
-        userId: decoded.id,
-        ip: req.ip,
-        userAgent: req.get('User-Agent')
-      });
-    } catch (error) {
-      // Token might be invalid, but we still want to clear the cookie
-      logger.debug('Invalid token during logout', { error: error.message });
-    }
-  }
-
-  // Clear the JWT cookie
-  res.cookie('jwt', 'loggedout', {
-    expires: new Date(Date.now() + 10 * 1000), // Expire in 10 seconds
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production'
-  });
-
-  res.status(200).json({ 
-    status: "success", 
-    message: "Logged out successfully." 
-  });
-});
+export const logout = (req, res) => {
+  console.log("Logout route hit");
+  res
+    .status(200)
+    .json({ status: "success", message: "Logged out successfully." });
+};
 
 /**
  * Protects routes and ensures the user is authenticated.
