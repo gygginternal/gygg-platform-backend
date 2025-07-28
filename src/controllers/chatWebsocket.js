@@ -49,6 +49,8 @@ export const initializeChatWebsocket = (server) => {
         socket.handshake.auth?.token ||
         socket.handshake.headers?.authorization?.split(" ")[1];
 
+      logger.debug(`[WS DEBUG] Connection attempt with token: ${token ? 'Present' : 'Missing'}`);
+
       if (!token) {
         logger.warn(
           `[WS Security] Connection attempt without token: ${socket.id}`

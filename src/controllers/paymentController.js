@@ -274,6 +274,20 @@ export const createPaymentIntentForContract = catchAsync(
       return next(new AppError("Tasker has not connected Stripe.", 400));
 
     const taskerStripeAccountId = contract.tasker.stripeAccountId;
+    
+    // Validate that the Stripe account actually exists
+    try {
+      await stripe.accounts.retrieve(taskerStripeAccountId);
+    } catch (error) {
+      if (error.code === 'account_invalid' || error.type === 'StripePermissionError') {
+        // Clear the invalid account ID from the user
+        await User.findByIdAndUpdate(contract.tasker._id, { 
+          $unset: { stripeAccountId: 1, stripeChargesEnabled: 1, stripePayoutsEnabled: 1 } 
+        });
+        return next(new AppError("Tasker's Stripe account is invalid. Please reconnect Stripe account.", 400));
+      }
+      throw error; // Re-throw other errors
+    }
     const amountInCents = Math.round(contract.agreedCost * 100); // Total amount provider pays
     if (amountInCents <= 0)
       return next(new AppError("Invalid contract cost.", 400));
@@ -343,16 +357,18 @@ export const createPaymentIntentForContract = catchAsync(
       await payment.save();
     }
 
-    // 5. Create PaymentIntent with Stripe Tax enabled
+    // 5. Create PaymentIntent with minimal required parameters
     const paymentIntentParams = {
       amount: amountInCents,
       currency: payment.currency,
-      automatic_payment_methods: { enabled: true },
-      capture_method: "manual",
-      application_fee_amount: payment.applicationFeeAmount,
-      transfer_data: { destination: taskerStripeAccountId },
+      // capture_method: "manual", // Disabled for testing - using automatic capture
       customer: stripeCustomerId,
-      automatic_tax: { enabled: true },
+      payment_method_types: ['card'], // Explicitly specify payment methods instead of automatic
+      // Stripe Connect parameters - disabled until Connect is properly configured
+      // application_fee_amount: payment.applicationFeeAmount,
+      // transfer_data: { destination: taskerStripeAccountId },
+      // automatic_payment_methods: { enabled: true }, // Disabled - not supported in current API version
+      // automatic_tax: { enabled: true }, // Disabled - requires Stripe Tax to be enabled on account
       metadata: {
         paymentId: payment._id.toString(),
         contractId: contractId.toString(),
@@ -361,29 +377,11 @@ export const createPaymentIntentForContract = catchAsync(
       },
     };
 
-    let paymentIntent;
-    if (payment.stripePaymentIntentId) {
-      try {
-        paymentIntent = await stripe.paymentIntents.update(
-          payment.stripePaymentIntentId,
-          paymentIntentParams
-        );
-      } catch (error) {
-        if (
-          error.code === "payment_intent_unexpected_state" ||
-          error.code === "resource_missing"
-        ) {
-          paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-          payment.stripePaymentIntentId = paymentIntent.id;
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-      payment.stripePaymentIntentId = paymentIntent.id;
-      payment.stripePaymentIntentSecret = paymentIntent.client_secret;
-    }
+    // For development/testing, always create a new PaymentIntent to avoid conflicts
+    // In production, you might want to reuse PaymentIntents for better UX
+    const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+    payment.stripePaymentIntentId = paymentIntent.id;
+    payment.stripePaymentIntentSecret = paymentIntent.client_secret;
 
     payment.status = "requires_payment_method";
     await payment.save();
@@ -537,16 +535,11 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
       return;
     }
 
-    // Extract Stripe Tax and payout info if available
-    let taxAmount = 0;
-    let amountAfterTax = 0;
-    let amountReceivedByPayee = 0;
-    if (paymentIntent.automatic_tax && paymentIntent.automatic_tax.amount_collectable != null) {
-      taxAmount = paymentIntent.automatic_tax.amount_collectable;
-    }
-    // Stripe's PaymentIntent has 'amount' (total), 'amount_received', and 'application_fee_amount'
-    // amountAfterTax = amount - taxAmount
-    amountAfterTax = paymentIntent.amount - taxAmount;
+    // Extract tax and payout info from payment model (manual calculation)
+    // Automatic tax is disabled - using manual tax calculation from environment
+    let taxAmount = payment.taxAmount || 0;
+    let amountAfterTax = payment.amountAfterTax || (paymentIntent.amount - taxAmount);
+    let amountReceivedByPayee = payment.amountReceivedByPayee || 0;
     // amountReceivedByPayee = amountAfterTax - applicationFeeAmount
     if (payment.applicationFeeAmount != null) {
       amountReceivedByPayee = amountAfterTax - payment.applicationFeeAmount;
