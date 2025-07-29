@@ -75,6 +75,24 @@ const paymentSchema = new mongoose.Schema(
       required: true,
     },
 
+    // Total amount provider pays (service + platform fee + tax)
+    totalProviderPayment: {
+      type: Number,
+      default: 0,
+    },
+
+    // Tax amount paid by provider
+    providerTaxAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    // Tax amount paid by tasker (deducted from their payment)
+    taskerTaxAmount: {
+      type: Number,
+      default: 0,
+    },
+
     // Status of the payment process
     status: {
       type: String,
@@ -173,14 +191,37 @@ paymentSchema.pre("save", async function (next) {
       const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
       const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
       const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
-      // Calculate tax on the total amount
-      this.taxAmount = Math.round(this.amount * taxPercent);
-      // Amount after tax (what goes to escrow)
-      this.amountAfterTax = this.amount - this.taxAmount;
-      // Platform fee is only paid by provider when posting a gig
-      this.applicationFeeAmount = Math.round(this.amountAfterTax * feePercentage) + fixedFeeCents;
-      // Amount received by Tasker (after platform fee and tax)
-      this.amountReceivedByPayee = Math.max(0, this.amountAfterTax - this.applicationFeeAmount);
+      // CORRECT PAYMENT BREAKDOWN:
+      // Provider pays: Service Amount + Platform Fee + Provider Tax
+      // Tasker receives: Service Amount - Tasker Tax
+      
+      // Service amount (base amount for the service)
+      const serviceAmount = this.amount;
+      
+      // Platform fee (10% + $5 fixed fee) - Provider pays this
+      this.applicationFeeAmount = Math.round(serviceAmount * feePercentage) + fixedFeeCents;
+      
+      // Tax calculations (both provider and tasker pay tax on their portions)
+      const providerTaxAmount = Math.round((serviceAmount + this.applicationFeeAmount) * taxPercent); // Tax on service + fee
+      const taskerTaxAmount = Math.round(serviceAmount * taxPercent); // Tax on service amount
+      
+      // Total tax amount (for reporting)
+      this.taxAmount = providerTaxAmount + taskerTaxAmount;
+      
+      // Provider tax (what provider pays)
+      this.providerTaxAmount = providerTaxAmount;
+      
+      // Tasker tax (deducted from tasker's payment)
+      this.taskerTaxAmount = taskerTaxAmount;
+      
+      // Total amount provider pays (service + platform fee + provider tax)
+      this.totalProviderPayment = serviceAmount + this.applicationFeeAmount + providerTaxAmount;
+      
+      // Amount tasker receives (service amount minus tasker tax)
+      this.amountReceivedByPayee = serviceAmount - taskerTaxAmount;
+      
+      // Amount after tax (for legacy compatibility)
+      this.amountAfterTax = serviceAmount;
       // Optional: Log a warning if fee exceeds amount significantly
       if (this.applicationFeeAmount >= this.amountAfterTax) {
         console.warn(

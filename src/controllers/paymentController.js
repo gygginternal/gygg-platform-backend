@@ -288,8 +288,9 @@ export const createPaymentIntentForContract = catchAsync(
       }
       throw error; // Re-throw other errors
     }
-    const amountInCents = Math.round(contract.agreedCost * 100); // Total amount provider pays
-    if (amountInCents <= 0)
+    // Create payment record first to calculate correct amounts
+    const serviceAmountInCents = Math.round(contract.agreedCost * 100); // Base service amount
+    if (serviceAmountInCents <= 0)
       return next(new AppError("Invalid contract cost.", 400));
 
     // --- Stripe Tax Integration ---
@@ -320,13 +321,7 @@ export const createPaymentIntentForContract = catchAsync(
     // const taxAmount = Math.round(amountInCents * taxPercent);
     // const amountAfterTax = amountInCents - taxAmount;
 
-    // 3. Calculate platform fee (still on pre-tax amount)
-    const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0;
-    const fixedFeeCents = 500; // $5.00 in cents
-    const percentageFee = Math.round(amountInCents * (feePercentage / 100));
-    const applicationFeeAmount = percentageFee + fixedFeeCents;
-
-    // 4. Update payment record (taxAmount and amountAfterTax will be set after payment)
+    // 3. Create/update payment record (this will trigger the pre-save hook to calculate amounts)
     let payment = await Payment.findOne({ contract: contractId });
     if (!payment) {
       payment = await Payment.create({
@@ -334,32 +329,25 @@ export const createPaymentIntentForContract = catchAsync(
         gig: contract.gig,
         payer: providerId,
         payee: contract.tasker._id,
-        amount: amountInCents,
+        amount: serviceAmountInCents, // Base service amount
         currency: 'cad',
         status: "requires_payment_method",
         stripeConnectedAccountId: taskerStripeAccountId,
-        applicationFeeAmount: applicationFeeAmount,
-        amountReceivedByPayee: 0, // Set to 0, will update after payment
-        taxAmount: 0, // Set to 0, will update after payment
-        amountAfterTax: 0, // Set to 0, will update after payment
       });
     } else if (!["requires_payment_method", "failed"].includes(payment.status)) {
       return next(new AppError(`Payment already in status: ${payment.status}`, 400));
     } else {
-      payment.amount = amountInCents;
-      payment.currency = 'cad';
-      payment.stripeConnectedAccountId = taskerStripeAccountId;
-      payment.applicationFeeAmount = applicationFeeAmount;
-      payment.amountReceivedByPayee = 0;
-      payment.taxAmount = 0;
-      payment.amountAfterTax = 0;
+      payment.amount = serviceAmountInCents;
       payment.status = "requires_payment_method";
       await payment.save();
     }
 
+    // Get the total amount provider needs to pay (after pre-save hook calculations)
+    const totalProviderPaymentAmount = payment.totalProviderPayment || payment.amount;
+
     // 5. Create PaymentIntent with minimal required parameters
     const paymentIntentParams = {
-      amount: amountInCents,
+      amount: totalProviderPaymentAmount,
       currency: payment.currency,
       // capture_method: "manual", // Disabled for testing - using automatic capture
       customer: stripeCustomerId,
@@ -368,7 +356,7 @@ export const createPaymentIntentForContract = catchAsync(
       // application_fee_amount: payment.applicationFeeAmount,
       // transfer_data: { destination: taskerStripeAccountId },
       // automatic_payment_methods: { enabled: true }, // Disabled - not supported in current API version
-      // automatic_tax: { enabled: true }, // Disabled - requires Stripe Tax to be enabled on account
+      automatic_tax: { enabled: true }, // Enable Stripe automatic tax calculation
       metadata: {
         paymentId: payment._id.toString(),
         contractId: contractId.toString(),
@@ -522,6 +510,80 @@ export const stripeWebhookHandler = async (req, res) => {
 
   res.status(200).json({ received: true });
 };
+
+// Endpoint to confirm payment success from frontend
+export const confirmPaymentSuccess = catchAsync(async (req, res, next) => {
+  const { paymentIntentId } = req.body;
+  
+  if (!paymentIntentId) {
+    return next(new AppError('Payment Intent ID is required', 400));
+  }
+
+  try {
+    // Verify the payment intent with Stripe
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    
+    if (paymentIntent.status !== 'succeeded') {
+      return next(new AppError('Payment has not succeeded yet', 400));
+    }
+
+    // Find the payment record
+    const payment = await Payment.findOne({
+      stripePaymentIntentId: paymentIntentId,
+    }).populate('contract');
+
+    if (!payment) {
+      return next(new AppError('Payment record not found', 404));
+    }
+
+    // Update payment status and details
+    payment.status = "succeeded";
+    payment.succeededAt = new Date();
+    
+    // Calculate amounts from payment model
+    let taxAmount = payment.taxAmount || 0;
+    let amountAfterTax = payment.amountAfterTax || (paymentIntent.amount - taxAmount);
+    let amountReceivedByPayee = payment.amountReceivedByPayee || 0;
+    
+    if (payment.applicationFeeAmount != null) {
+      amountReceivedByPayee = amountAfterTax - payment.applicationFeeAmount;
+    }
+
+    payment.taxAmount = taxAmount;
+    payment.amountAfterTax = amountAfterTax;
+    payment.amountReceivedByPayee = amountReceivedByPayee;
+    await payment.save();
+
+    // Update contract status
+    const contract = await Contract.findById(payment.contract);
+    if (contract && contract.status !== "completed") {
+      contract.status = "completed";
+      await contract.save();
+    }
+
+    res.status(200).json({
+      status: "success",
+      message: "Payment confirmed and contract updated",
+      data: {
+        payment: {
+          id: payment._id,
+          status: payment.status,
+          amount: payment.amount,
+          taxAmount: payment.taxAmount,
+          amountAfterTax: payment.amountAfterTax,
+          amountReceivedByPayee: payment.amountReceivedByPayee,
+        },
+        contract: {
+          id: contract._id,
+          status: contract.status,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error confirming payment success:', error);
+    return next(new AppError('Failed to confirm payment success', 500));
+  }
+});
 
 // Add new handler for payment_intent.succeeded
 const handlePaymentIntentSucceeded = async (paymentIntent) => {
@@ -832,22 +894,25 @@ export const getInvoicePdf = catchAsync(async (req, res, next) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=invoice-${paymentId}.pdf`);
     await generateInvoicePdf({
-      paymentId: payment._id,
-      date: payment.createdAt ? payment.createdAt.toISOString().slice(0, 10) : '',
-      gigTitle: payment.gig?.title || '',
-      contractId: payment.contract?._id || '',
-      providerFirstName: payment.payer.firstName,
-      providerLastName: payment.payer.lastName,
-      providerEmail: payment.payer.email,
-      taskerFirstName: payment.payee.firstName,
-      taskerLastName: payment.payee.lastName,
-      taskerEmail: payment.payee.email,
+      paymentId: payment._id.toString().slice(-8), // Last 8 characters for invoice number
+      date: payment.createdAt ? payment.createdAt.toLocaleDateString('en-US') : new Date().toLocaleDateString('en-US'),
+      gigTitle: payment.contract?.title || payment.gig?.title || 'Professional Service',
+      contractId: payment.contract?._id?.toString().slice(-8) || 'N/A',
+      providerFirstName: payment.payer?.firstName || 'N/A',
+      providerLastName: payment.payer?.lastName || '',
+      providerEmail: payment.payer?.email || 'N/A',
+      taskerFirstName: payment.payee?.firstName || 'N/A',
+      taskerLastName: payment.payee?.lastName || '',
+      taskerEmail: payment.payee?.email || 'N/A',
       amount: (payment.amount / 100).toFixed(2),
-      currency: payment.currency || 'USD',
-      platformFee: (payment.applicationFeeAmount / 100).toFixed(2),
-      tax: (payment.taxAmount / 100).toFixed(2),
-      payout: (payment.amountAfterTax / 100).toFixed(2),
-    }, res);
+      currency: payment.currency || 'cad',
+      platformFee: ((payment.applicationFeeAmount || 0) / 100).toFixed(2),
+      tax: ((payment.taxAmount || 0) / 100).toFixed(2),
+      providerTax: ((payment.providerTaxAmount || 0) / 100).toFixed(2),
+      taskerTax: ((payment.taskerTaxAmount || 0) / 100).toFixed(2),
+      totalProviderPayment: ((payment.totalProviderPayment || payment.amount) / 100).toFixed(2),
+      payout: ((payment.amountReceivedByPayee || 0) / 100).toFixed(2),
+    }, res, req.user.role);
   } catch (err) {
     logger.error('Failed to generate PDF invoice:', err);
     return res.status(500).json({ status: 'fail', message: 'Failed to generate PDF invoice.' });

@@ -1,11 +1,79 @@
-Invoice for {{paymentId}}
-Date: {{date}}
-Provider: {{providerFirstName}} {{providerLastName}} ({{providerEmail}})
-Tasker: {{taskerFirstName}} {{taskerLastName}} ({{taskerEmail}})
-Gig: {{gigTitle}}
-Contract ID: {{contractId}}
+================================================================================
+                                    GYGG PLATFORM
+                              Professional Services Invoice
+================================================================================
 
-Amount: {{amount}} {{currency}}
-Platform Fee: {{platformFee}} {{currency}}
-Tax: {{tax}} {{currency}}
-Payout: {{payout}} {{currency}}
+INVOICE DETAILS
+--------------------------------------------------------------------------------
+Invoice Number:         INV-{{paymentId}}
+Date Issued:           {{date}}
+Payment Status:        Completed
+Payment Method:        Credit Card (Stripe)
+
+================================================================================
+
+SERVICE PROVIDER INFORMATION
+--------------------------------------------------------------------------------
+Name:                  {{taskerFirstName}} {{taskerLastName}}
+Email:                 {{taskerEmail}}
+Role:                  Service Provider (Tasker)
+
+CLIENT INFORMATION  
+--------------------------------------------------------------------------------
+Name:                  {{providerFirstName}} {{providerLastName}}
+Email:                 {{providerEmail}}
+Role:                  Service Requester (Provider)
+
+================================================================================
+
+SERVICE DETAILS
+--------------------------------------------------------------------------------
+Service Description:   {{gigTitle}}
+Contract ID:          {{contractId}}
+Service Category:     Professional Services
+Duration:             As per contract agreement
+
+================================================================================
+
+PAYMENT BREAKDOWN
+--------------------------------------------------------------------------------
+Service Amount:                                           ${{amount}} {{currency}}
+Platform Processing Fee (10%):                           ${{platformFee}} {{currency}}
+Provider Tax (HST/GST):                                   ${{providerTax}} {{currency}}
+Tasker Tax (HST/GST):                                     ${{taskerTax}} {{currency}}
+--------------------------------------------------------------------------------
+TOTAL PROVIDER PAYMENT:                                   ${{totalProviderPayment}} {{currency}}
+NET AMOUNT TO SERVICE PROVIDER:                           ${{payout}} {{currency}}
+================================================================================
+
+PAYMENT INFORMATION
+--------------------------------------------------------------------------------
+• Payment processed securely through Gygg Platform
+• Funds transferred to service provider upon completion
+• All transactions protected by Gygg's dispute resolution system
+• Payment processed via Stripe secure payment gateway
+
+TERMS & CONDITIONS
+--------------------------------------------------------------------------------
+• This invoice is generated automatically by Gygg Platform
+• All services are subject to Gygg's Terms of Service
+• Disputes must be raised within 7 days of service completion
+• Platform fee covers payment processing and service protection
+
+================================================================================
+
+CONTACT INFORMATION
+--------------------------------------------------------------------------------
+For support or inquiries:
+Email: support@gygg.com
+Website: www.gygg.com
+Phone: 1-800-GYGG-HELP
+
+Thank you for using Gygg Platform - Connecting talent with opportunity!
+
+================================================================================
+This document serves as an official receipt for services rendered through
+the Gygg Platform. Please retain for your records.
+
+Generated on: {{date}} | Document ID: {{paymentId}}
+================================================================================

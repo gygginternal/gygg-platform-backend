@@ -11,6 +11,7 @@ import {
   getInvoicePdf,
   getBalance,
   processWithdrawal,
+  confirmPaymentSuccess,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -72,6 +73,17 @@ router.post(
   validateRequest,
   createPaymentIntentForContract
 ); // Calls the controller to handle payment intent creation
+
+// Route to confirm payment success from frontend
+router.post(
+  "/confirm-payment-success",
+  [
+    restrictTo("provider"), // Only the provider can confirm payment
+    body("paymentIntentId").notEmpty().withMessage("Payment Intent ID is required"),
+  ],
+  validateRequest,
+  confirmPaymentSuccess
+);
 
 // Route to refund a payment for a specific contract.
 // Only accessible by users with 'admin' or 'provider' roles (admins and the provider can issue a refund).
