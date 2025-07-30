@@ -35,18 +35,51 @@ const app = express();
 
 // --- Security Middleware ---
 app.use(helmet()); // Set security HTTP headers
+// Dynamic CORS configuration
+const getAllowedOrigins = () => {
+  const origins = [
+    "http://localhost:3000",
+    "http://localhost:5173", 
+    "http://localhost:3001",
+    "https://gygg.app",
+    "https://www.gygg.app",
+  ];
+  
+  // Add environment-specific frontend URL if different from hardcoded ones
+  if (process.env.FRONTEND_URL && !origins.includes(process.env.FRONTEND_URL)) {
+    origins.push(process.env.FRONTEND_URL);
+  }
+  
+  // Add any additional frontend URLs from environment (comma-separated)
+  if (process.env.ADDITIONAL_FRONTEND_URLS) {
+    const additionalUrls = process.env.ADDITIONAL_FRONTEND_URLS.split(',').map(url => url.trim());
+    origins.push(...additionalUrls);
+  }
+  
+  return origins;
+};
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:5173", 
-      "http://localhost:3001",
-      process.env.FRONTEND_URL || "http://localhost:3000",
-    ],
+    origin: function (origin, callback) {
+      const allowedOrigins = getAllowedOrigins();
+      
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        logger.warn(`CORS blocked request from origin: ${origin}`);
+        logger.info(`Allowed origins: ${allowedOrigins.join(', ')}`);
+        return callback(new Error('Not allowed by CORS'), false);
+      }
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
     optionsSuccessStatus: 200,
+    preflightContinue: false,
   })
 );
 app.use(express.json({ limit: "10kb" })); // Body parser, reading data from body into req.body
