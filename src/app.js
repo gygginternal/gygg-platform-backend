@@ -1,5 +1,5 @@
-import dotenv from 'dotenv';
-dotenv.config({ path: './.env' });
+import dotenv from "dotenv";
+dotenv.config({ path: "./.env" });
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -24,7 +24,7 @@ import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicationRouter from "./routes/applicationRoutes.js";
 import offerRouter from "./routes/offerRoutes.js";
-import notificationRoutes from './routes/notificationRoutes.js';
+import notificationRoutes from "./routes/notificationRoutes.js";
 
 // Stripe Webhook Handler
 import { stripeWebhookHandler } from "./controllers/paymentController.js";
@@ -34,15 +34,19 @@ const app = express();
 
 // --- Security Middleware ---
 app.use(helmet()); // Set security HTTP headers
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:3001'
-  ],
-  credentials: true
-}));
-app.use(express.json({ limit: '10kb' })); // Body parser, reading data from body into req.body
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://localhost:3001",
+      "https://gygg.app",
+      process.env.FRONTEND_URL || "http://localhost:3000",
+    ],
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "10kb" })); // Body parser, reading data from body into req.body
 app.use(cookieParser()); // Parse cookies
 app.use(mongoSanitize()); // Sanitize data against NoSQL query injection
 app.use(xss()); // Sanitize data against XSS
@@ -51,27 +55,31 @@ app.use(xss()); // Sanitize data against XSS
 const limiter = rateLimit({
   max: 1000, // Limit each IP to 1000 requests per windowMs
   windowMs: 60 * 60 * 1000, // 1 hour
-  message: 'Too many requests from this IP, please try again in an hour!'
+  message: "Too many requests from this IP, please try again in an hour!",
 });
-app.use('/api', limiter);
+app.use("/api", limiter);
 
 // --- Health Check Endpoint ---
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.status(200).json({
-    status: 'healthy',
+    status: "healthy",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
-    version: process.env.npm_package_version || '1.0.0'
+    version: process.env.npm_package_version || "1.0.0",
   });
 });
 
 // --- API Documentation ---
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
-  explorer: true,
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: 'Gig Platform API Documentation'
-}));
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(specs, {
+    explorer: true,
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "Gig Platform API Documentation",
+  })
+);
 
 // --- Stripe Webhook Handler (needs raw body) ---
 app.post(
@@ -91,10 +99,31 @@ app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
 app.use("/api/v1/applications", applicationRouter);
 app.use("/api/v1/offers", offerRouter);
-app.use('/api/v1/notifications', notificationRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
+
+// --- API Base Route ---
+app.get("/api/v1", (req, res) => {
+  res.status(200).json({
+    status: "success",
+    message: "Gig Platform API v1",
+    version: "1.0.0",
+    endpoints: {
+      users: "/api/v1/users",
+      gigs: "/api/v1/gigs",
+      posts: "/api/v1/posts",
+      chat: "/api/v1/chat",
+      payments: "/api/v1/payments",
+      reviews: "/api/v1/reviews",
+      contracts: "/api/v1/contracts",
+      applications: "/api/v1/applications",
+      offers: "/api/v1/offers",
+      notifications: "/api/v1/notifications"
+    }
+  });
+});
 
 // --- Error Handling ---
-app.all('*', (req, res, next) => {
+app.all("*", (req, res, next) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
 });
 
