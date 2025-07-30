@@ -322,6 +322,24 @@ userSchema.methods.createEmailVerificationToken = function () {
   return verificationToken;
 };
 
+// Generate password reset token
+userSchema.methods.createPasswordResetToken = function () {
+  const resetToken = crypto.randomBytes(32).toString("hex");
+
+  this.passwordResetToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
+
+  this.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  logger.debug(
+    `Generated password reset token (raw): ${resetToken} for user ${this._id}`
+  );
+
+  return resetToken;
+};
+
 // ---------------- Export ---------------- //
 const User = mongoose.model("User", userSchema);
 export default User;

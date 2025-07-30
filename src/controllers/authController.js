@@ -75,19 +75,18 @@ const sendVerificationEmail = async (user, req) => {
   const verificationToken = user.createEmailVerificationToken();
   await user.save({ validateBeforeSave: false });
 
-  // Create both API and frontend URLs
-  const apiVerificationURL = `${req.protocol}://${req.get(
-    "host"
-  )}/api/v1/users/verifyEmail/${verificationToken}`;
-
-  // Use FRONTEND_URL from environment if available, otherwise construct from request
-  const frontendBaseURL =
-    process.env.FRONTEND_URL ||
-    `${req.protocol}://${req.get("host").replace(/:\d+/, "")}:3000`;
-  const frontendVerificationURL = `${frontendBaseURL}/verify-email?token=${verificationToken}`;
+  // Use gygg.app for production URLs
+  const frontendBaseURL = process.env.FRONTEND_URL || "http://localhost:3000";
+  
+  // Create verification URL that goes directly to frontend
+  const verificationURL = `${frontendBaseURL}/verify-email?token=${verificationToken}`;
+  
+  // For backward compatibility, also create API URL (but prefer frontend URL)
+  const backendBaseURL = process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`;
+  const apiVerificationURL = `${backendBaseURL}/api/v1/users/verifyEmail/${verificationToken}`;
 
   // Plain text version
-  const message = `Welcome to Gygg Platform!\n\nPlease verify your email by clicking this link:\n\n${apiVerificationURL}\n\nOr visit our website and enter this verification code: ${verificationToken}\n\nThis link will expire in 10 minutes.\n\nIf you didn't create an account, please ignore this email.`;
+  const message = `Welcome to Gygg Platform!\n\nPlease verify your email by clicking this link:\n\n${verificationURL}\n\nThis link will expire in 10 minutes.\n\nIf you didn't create an account, please ignore this email.`;
 
   // HTML version with better formatting
   const html = `
@@ -302,11 +301,11 @@ stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejo
       <p class="instructions">
         Thank you for signing up. To complete your registration and verify your email address, please click the button below:
       </p>
-      <a href="${apiVerificationURL}" class="verify-button">Verify My Email</a>
+      <a href="${verificationURL}" class="verify-button">Verify My Email</a>
       <p class="sub-instructions">
         If the button doesn't work, you can copy and paste this link into your browser:
       </p>
-      <div class="url-display">${apiVerificationURL}</div>
+      <div class="url-display">${verificationURL}</div>
       <p class="expiry-notice">This link will expire in 10 minutes.</p>
       <p class="disclaimer">
        If you didn't create an account with us, please ignore this email.
@@ -434,14 +433,29 @@ export const login = catchAsync(async (req, res, next) => {
   }
 
   logger.info(`User logged in successfully: ${user.email}`);
-  // createSendToken now handles sending the token, user data, AND the onboarding redirect signal
+  
+  // Determine redirection based on onboarding completion status
+  let redirectToOnboarding = null;
+  
+  // Check if user needs onboarding
+  const needsTaskerOnboarding = user.role.includes("tasker") && !user.isTaskerOnboardingComplete;
+  const needsProviderOnboarding = user.role.includes("provider") && !user.isProviderOnboardingComplete;
+  
+  if (needsTaskerOnboarding && needsProviderOnboarding) {
+    // User has both roles and needs both onboardings - let them choose or default to tasker
+    redirectToOnboarding = "/onboarding/tasker";
+  } else if (needsTaskerOnboarding) {
+    redirectToOnboarding = "/onboarding/tasker";
+  } else if (needsProviderOnboarding) {
+    redirectToOnboarding = "/onboarding/provider";
+  }
+  // If no onboarding needed, redirectToOnboarding remains null
+  
   const token = signToken(user._id);
   res.status(200).json({
     status: "success",
     data: { user, token },
-    redirectToOnboarding: user.role.includes("provider")
-      ? "/onboarding/provider"
-      : "/onboarding/tasker",
+    redirectToOnboarding,
   });
 });
 
@@ -523,27 +537,61 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
     .update(req.params.token)
     .digest("hex");
 
-  const user = await User.findOne({
+  // First, check if user exists with this token (regardless of expiry)
+  const userWithToken = await User.findOne({
     emailVerificationToken: hashedToken,
-    emailVerificationExpires: { $gt: Date.now() },
   });
 
-  if (!user) {
-    logger.warn("Email verification failed: Invalid or expired token.", {
+  if (!userWithToken) {
+    logger.warn("Email verification failed: Token not found.", {
       tokenAttempt: req.params.token,
     });
-    return next(new AppError("Token is invalid or has expired.", 400));
+    
+    // Redirect to frontend with error message
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    return res.redirect(302, `${frontendURL}/verify-email?error=invalid_token&message=Token not found. Please request a new verification email.`);
   }
 
-  user.isEmailVerified = true;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpires = undefined;
-  await user.save();
+  // Check if token has expired
+  if (userWithToken.emailVerificationExpires <= Date.now()) {
+    logger.warn("Email verification failed: Token expired.", {
+      tokenAttempt: req.params.token,
+      userEmail: userWithToken.email,
+      expiredAt: new Date(userWithToken.emailVerificationExpires),
+    });
+    
+    // Clean up expired token
+    userWithToken.emailVerificationToken = undefined;
+    userWithToken.emailVerificationExpires = undefined;
+    await userWithToken.save({ validateBeforeSave: false });
+    
+    // Redirect to frontend with expired token message
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    return res.redirect(302, `${frontendURL}/verify-email?error=expired_token&message=Token has expired. Please request a new verification email.&email=${encodeURIComponent(userWithToken.email)}`);
+  }
 
-  logger.info(`Email verified successfully for user ${user._id}`);
+  // Check if email is already verified
+  if (userWithToken.isEmailVerified) {
+    logger.info("Email verification attempted for already verified user.", {
+      userEmail: userWithToken.email,
+    });
+    
+    // Redirect to login with success message
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    return res.redirect(302, `${frontendURL}/login?message=Email already verified. You can now log in.`);
+  }
+
+  // Token is valid and not expired - verify the email
+  userWithToken.isEmailVerified = true;
+  userWithToken.emailVerificationToken = undefined;
+  userWithToken.emailVerificationExpires = undefined;
+  await userWithToken.save();
+
+  logger.info(`Email verified successfully for user ${userWithToken._id}`);
 
   // Redirect to frontend login page after successful verification
-  return res.redirect(302, "http://localhost:3000/login");
+  const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+  return res.redirect(302, `${frontendURL}/login?message=Email verified successfully! You can now log in.`);
 });
 
 /**
@@ -614,18 +662,17 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
   }
   const resetToken = user.createPasswordResetToken();
   await user.save({ validateBeforeSave: false });
-  const apiResetURL = `${req.protocol}://${req.get(
-    "host"
-  )}/api/v1/users/resetPassword/${resetToken}`;
-
-  // Use FRONTEND_URL from environment if available, otherwise construct from request
-  const frontendBaseURL =
-    process.env.FRONTEND_URL ||
-    `${req.protocol}://${req.get("host").replace(/:\d+/, "")}:3000`;
-  const frontendResetURL = `${frontendBaseURL}/reset-password?token=${resetToken}`;
+  
+  // Use gygg.app for production URLs
+  const frontendBaseURL = process.env.FRONTEND_URL || "http://localhost:3000";
+  const resetURL = `${frontendBaseURL}/reset-password?token=${resetToken}`;
+  
+  // For backward compatibility, also create API URL (but prefer frontend URL)
+  const backendBaseURL = process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`;
+  const apiResetURL = `${backendBaseURL}/api/v1/users/resetPassword/${resetToken}`;
 
   // Plain text version
-  const message = `Forgot your password? Reset it here: ${apiResetURL}\n\nIf you didn't request this password reset, please ignore this email.`;
+  const message = `Forgot your password? Reset it here: ${resetURL}\n\nIf you didn't request this password reset, please ignore this email.`;
 
   // HTML version with better formatting
   const html = `
@@ -819,11 +866,11 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
         We received a request to reset your password for your <span class="gold-heading">GYGG Platform</span> account.
         To reset your password, please click the button below:
       </p>
-      <a href="${apiResetURL}" class="reset-button mt-1 mb-1-5">Reset My Password</a>
+      <a href="${resetURL}" class="reset-button mt-1 mb-1-5">Reset My Password</a>
       <p class="instructions mb-1-5">
         If the button doesn't work, you can copy and paste this link into your browser:
       </p>
-      <div class="url-display">${apiResetURL}</div>
+      <div class="url-display">${resetURL}</div>
       <p class="expiry-notice">This link will expire in 10 minutes.</p>
       <p class="disclaimer">
         If you didn't request a password reset, you can safely ignore this email or contact support if you have concerns.

@@ -28,6 +28,7 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 
 // Stripe Webhook Handler
 import { stripeWebhookHandler } from "./controllers/paymentController.js";
+import { startTokenCleanupJob } from "./utils/tokenCleanup.js";
 
 // --- App Initialization ---
 const app = express();
@@ -130,5 +131,10 @@ app.all("*", (req, res, next) => {
 });
 
 app.use(globalErrorHandler);
+
+// Start token cleanup job
+if (process.env.NODE_ENV !== 'test') {
+  startTokenCleanupJob();
+}
 
 export default app;
