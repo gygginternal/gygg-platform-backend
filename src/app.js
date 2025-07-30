@@ -38,12 +38,14 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://localhost:5173",
+      "http://localhost:5173", 
       "http://localhost:3001",
-      "https://gygg.app",
       process.env.FRONTEND_URL || "http://localhost:3000",
     ],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    optionsSuccessStatus: 200,
   })
 );
 app.use(express.json({ limit: "10kb" })); // Body parser, reading data from body into req.body
@@ -117,8 +119,8 @@ app.get("/api/v1", (req, res) => {
       contracts: "/api/v1/contracts",
       applications: "/api/v1/applications",
       offers: "/api/v1/offers",
-      notifications: "/api/v1/notifications"
-    }
+      notifications: "/api/v1/notifications",
+    },
   });
 });
 
