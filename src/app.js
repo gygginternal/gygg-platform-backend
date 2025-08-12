@@ -40,10 +40,13 @@ const getAllowedOrigins = () => {
   const origins = [
     "http://localhost:3000",
     "http://localhost:5173", 
-    "http://localhost:3001",
-    "https://gygg.app",
-    "https://www.gygg.app",
+    "http://localhost:3001"
   ];
+  
+  // Add CORS_URL if it's defined and not empty
+  if (process.env.CORS_URL && process.env.CORS_URL.trim() !== '') {
+    origins.push(process.env.CORS_URL);
+  }
   
   // Add environment-specific frontend URL if different from hardcoded ones
   if (process.env.FRONTEND_URL && !origins.includes(process.env.FRONTEND_URL)) {
