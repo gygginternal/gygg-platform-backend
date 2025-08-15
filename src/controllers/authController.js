@@ -72,8 +72,16 @@ const createSendToken = (user, statusCode, res) => {
  * Sends email verification to the user.
  */
 const sendVerificationEmail = async (user, req) => {
+  // Generate token and save user in a single transaction to prevent race conditions
   const verificationToken = user.createEmailVerificationToken();
-  await user.save({ validateBeforeSave: false });
+  
+  try {
+    await user.save({ validateBeforeSave: false });
+    logger.info(`Verification token saved for user ${user._id}. Token expires: ${new Date(user.emailVerificationExpires)}`);
+  } catch (error) {
+    logger.error(`Failed to save verification token for user ${user._id}:`, error);
+    throw error;
+  }
 
   // Use gygg.app for production URLs
   const frontendBaseURL = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -84,6 +92,8 @@ const sendVerificationEmail = async (user, req) => {
   // For backward compatibility, also create API URL (but prefer frontend URL)
   const backendBaseURL = process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`;
   const apiVerificationURL = `${backendBaseURL}/api/v1/users/verifyEmail/${verificationToken}`;
+  
+  logger.info(`Generated verification URL for ${user.email}: ${verificationURL}`);
 
   // Plain text version
   const message = `Welcome to Gygg Platform!\n\nPlease verify your email by clicking this link:\n\n${verificationURL}\n\nThis link will expire in 10 minutes.\n\nIf you didn't create an account, please ignore this email.`;
@@ -94,8 +104,17 @@ const sendVerificationEmail = async (user, req) => {
   <html lang="en">
   <head>
   <meta charset="UTF-8">
-  <title>Verify your email address - GYGG Platform.</title>
+  <title>Verify your email address - GYGG Platform</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
   <style>
     /* Base & Font Styles */
     html, body {
@@ -347,7 +366,25 @@ stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejo
 export const signup = catchAsync(async (req, res, next) => {
   try {
     const newUser = await User.create(req.body);
-    await sendVerificationEmail(newUser, req); // Send verification email after user creation
+    
+    try {
+      await sendVerificationEmail(newUser, req); // Send verification email after user creation
+    } catch (emailError) {
+      // If rate limiting error occurs during signup, still create the user but inform them
+      if (emailError.message && emailError.message.includes('Too many verification attempts')) {
+        logger.warn(`Rate limiting during signup for ${newUser.email}: ${emailError.message}`);
+        // User is created but verification email is rate limited
+        const token = signToken(newUser._id);
+        return res.status(201).json({
+          status: "success",
+          data: { user: newUser },
+          token,
+          message: "Account created successfully. " + emailError.message,
+        });
+      }
+      // Re-throw other email errors
+      throw emailError;
+    }
     // Generate JWT token
     const token = signToken(newUser._id);
     res.status(201).json({
@@ -532,10 +569,13 @@ export const restrictTo = (...allowedRoles) => {
  * @route GET /api/v1/users/verifyEmail/:token
  */
 export const verifyEmail = catchAsync(async (req, res, next) => {
+  const rawToken = req.params.token;
   const hashedToken = crypto
     .createHash("sha256")
-    .update(req.params.token)
+    .update(rawToken)
     .digest("hex");
+
+  logger.info(`Email verification attempt - Raw token: ${rawToken}, Hashed: ${hashedToken}`);
 
   // First, check if user exists with this token (regardless of expiry)
   const userWithToken = await User.findOne({
@@ -544,12 +584,26 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 
   if (!userWithToken) {
     logger.warn("Email verification failed: Token not found.", {
-      tokenAttempt: req.params.token,
+      rawToken: rawToken,
+      hashedToken: hashedToken,
     });
+    
+    // Debug: Check if there are any users with verification tokens
+    const usersWithTokens = await User.find({
+      emailVerificationToken: { $exists: true, $ne: null }
+    }).select('email emailVerificationToken emailVerificationExpires');
+    
+    logger.warn(`Found ${usersWithTokens.length} users with verification tokens:`, 
+      usersWithTokens.map(u => ({
+        email: u.email,
+        tokenHash: u.emailVerificationToken,
+        expires: u.emailVerificationExpires
+      }))
+    );
     
     // Redirect to frontend with error message
     const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
-    return res.redirect(302, `${frontendURL}/verify-email?error=invalid_token&message=Token not found. Please request a new verification email.`);
+    return res.redirect(302, `${frontendURL}/verify-email?error=invalid_token&message=This verification link is invalid or has expired. Please request a new verification email below.`);
   }
 
   // Check if token has expired
@@ -583,8 +637,7 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 
   // Token is valid and not expired - verify the email
   userWithToken.isEmailVerified = true;
-  userWithToken.emailVerificationToken = undefined;
-  userWithToken.emailVerificationExpires = undefined;
+  userWithToken.resetEmailVerificationAttempts(); // Clear attempts and tokens
   await userWithToken.save();
 
   logger.info(`Email verified successfully for user ${userWithToken._id}`);
@@ -616,11 +669,23 @@ export const resendVerificationEmail = catchAsync(async (req, res, next) => {
   if (user.isEmailVerified) {
     return next(new AppError("Your email is already verified.", 400));
   }
-  await sendVerificationEmail(user, req);
-  res.status(200).json({
-    status: "success",
-    message: "Verification email resent. Please check your inbox.",
-  });
+  
+  logger.info(`Attempting to send verification email to ${email}. Current attempts: ${user.emailVerificationAttempts || 0}/10`);
+  
+  try {
+    await sendVerificationEmail(user, req);
+    res.status(200).json({
+      status: "success",
+      message: "Verification email sent. Please check your inbox and spam folder.",
+    });
+  } catch (error) {
+    // Handle rate limiting errors
+    if (error.message && error.message.includes('Too many verification attempts')) {
+      return next(new AppError(error.message, 429)); // 429 Too Many Requests
+    }
+    // Re-throw other errors
+    throw error;
+  }
 });
 
 export const updatePassword = catchAsync(async (req, res, next) => {

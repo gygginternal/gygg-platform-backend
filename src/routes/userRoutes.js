@@ -221,6 +221,70 @@ router.post('/login', loginValidation, validateRequest, login);
 
 router.get('/verifyEmail/:token', verifyEmail); // Token validated by controller
 
+// Debug route for development (remove in production)
+if (process.env.NODE_ENV === 'development') {
+  router.get('/debug/verification/:email', async (req, res) => {
+    try {
+      const User = (await import('../models/User.js')).default;
+      const user = await User.findOne({ email: req.params.email });
+      
+      if (!user) {
+        return res.json({ error: 'User not found' });
+      }
+      
+      const rateLimitStatus = user.getEmailVerificationStatus();
+      
+      res.json({
+        email: user.email,
+        isEmailVerified: user.isEmailVerified,
+        hasToken: !!user.emailVerificationToken,
+        tokenExpires: user.emailVerificationExpires ? new Date(user.emailVerificationExpires) : null,
+        tokenExpired: user.emailVerificationExpires ? user.emailVerificationExpires <= Date.now() : null,
+        rateLimit: rateLimitStatus
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Generate fresh verification link for testing
+  router.post('/debug/generate-verification/:email', async (req, res) => {
+    try {
+      const User = (await import('../models/User.js')).default;
+      const user = await User.findOne({ email: req.params.email });
+      
+      if (!user) {
+        return res.json({ error: 'User not found' });
+      }
+      
+      if (user.isEmailVerified) {
+        return res.json({ error: 'User is already verified' });
+      }
+      
+      try {
+        const token = user.createEmailVerificationToken();
+        await user.save({ validateBeforeSave: false });
+        
+        const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+        const verificationURL = `${frontendURL}/verify-email?token=${token}`;
+        
+        res.json({
+          success: true,
+          email: user.email,
+          token: token,
+          verificationURL: verificationURL,
+          expires: new Date(user.emailVerificationExpires),
+          attempts: user.emailVerificationAttempts
+        });
+      } catch (error) {
+        res.status(429).json({ error: error.message });
+      }
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+}
+
 // --- Forgot/Reset Password Routes ---
 router.post('/forgotPassword', [
     body('email').isEmail().withMessage('Please provide a valid email.').normalizeEmail(),

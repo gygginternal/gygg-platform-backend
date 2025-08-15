@@ -193,6 +193,11 @@ const userSchema = new mongoose.Schema(
     },
     emailVerificationToken: String,
     emailVerificationExpires: Date,
+    emailVerificationAttempts: {
+      type: Number,
+      default: 0,
+    },
+    emailVerificationCooldownUntil: Date,
 
     // Stripe Integration
     stripeAccountId: String,
@@ -304,8 +309,32 @@ userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
   return false;
 };
 
-// Generate email verification token
+// Generate email verification token with rate limiting
 userSchema.methods.createEmailVerificationToken = function () {
+  // Check if user is in cooldown period
+  if (this.emailVerificationCooldownUntil && this.emailVerificationCooldownUntil > Date.now()) {
+    const remainingTime = Math.ceil((this.emailVerificationCooldownUntil - Date.now()) / 1000 / 60);
+    throw new Error(`Too many verification attempts. Please wait ${remainingTime} minutes before requesting another verification email.`);
+  }
+
+  // Reset attempts if cooldown period has passed
+  if (this.emailVerificationCooldownUntil && this.emailVerificationCooldownUntil <= Date.now()) {
+    this.emailVerificationAttempts = 0;
+    this.emailVerificationCooldownUntil = undefined;
+  }
+
+  // Check attempt limit
+  if (this.emailVerificationAttempts >= 10) {
+    // Set 10-minute cooldown
+    this.emailVerificationCooldownUntil = Date.now() + 10 * 60 * 1000;
+    throw new Error('Too many verification attempts. Please wait 10 minutes before requesting another verification email.');
+  }
+
+  // Clear old token (replace with new one)
+  this.emailVerificationToken = undefined;
+  this.emailVerificationExpires = undefined;
+
+  // Generate new token
   const verificationToken = crypto.randomBytes(32).toString("hex");
 
   this.emailVerificationToken = crypto
@@ -315,11 +344,45 @@ userSchema.methods.createEmailVerificationToken = function () {
 
   this.emailVerificationExpires = Date.now() + 10 * 60 * 1000;
 
+  // Increment attempt counter
+  this.emailVerificationAttempts = (this.emailVerificationAttempts || 0) + 1;
+
   logger.debug(
-    `Generated email verification token (raw): ${verificationToken} for user ${this._id}`
+    `Generated email verification token (raw): ${verificationToken} for user ${this._id}. Attempt ${this.emailVerificationAttempts}/10`
   );
 
   return verificationToken;
+};
+
+// Reset email verification attempts (called after successful verification)
+userSchema.methods.resetEmailVerificationAttempts = function () {
+  this.emailVerificationAttempts = 0;
+  this.emailVerificationCooldownUntil = undefined;
+  this.emailVerificationToken = undefined;
+  this.emailVerificationExpires = undefined;
+  
+  logger.debug(`Reset email verification attempts for user ${this._id}`);
+};
+
+// Check email verification rate limit status
+userSchema.methods.getEmailVerificationStatus = function () {
+  const now = Date.now();
+  const isInCooldown = this.emailVerificationCooldownUntil && this.emailVerificationCooldownUntil > now;
+  const remainingAttempts = Math.max(0, 10 - (this.emailVerificationAttempts || 0));
+  
+  let cooldownMinutes = 0;
+  if (isInCooldown) {
+    cooldownMinutes = Math.ceil((this.emailVerificationCooldownUntil - now) / 1000 / 60);
+  }
+  
+  return {
+    attempts: this.emailVerificationAttempts || 0,
+    maxAttempts: 10,
+    remainingAttempts,
+    isInCooldown,
+    cooldownMinutes,
+    canRequestVerification: !isInCooldown && remainingAttempts > 0
+  };
 };
 
 // Generate password reset token
