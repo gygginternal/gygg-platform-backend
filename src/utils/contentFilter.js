@@ -4,8 +4,8 @@ import { RekognitionClient, DetectModerationLabelsCommand } from '@aws-sdk/clien
 // Comprehensive list of inappropriate words and patterns
 const PROFANITY_LIST = [
   // Basic profanity
-  'fuck', 'shit', 'damn', 'bitch', 'ass', 'asshole', 'bastard', 'crap',
-  'piss', 'hell', 'whore', 'slut', 'cunt', 'cock', 'dick', 'pussy',
+  'fuck', 'shit', 'damn', 'bitch', 'asshole', 'bastard', 'crap',
+  'piss', 'whore', 'slut', 'cunt', 'cock', 'dick', 'pussy',
   
   // Sexual content
   'sex', 'porn', 'nude', 'naked', 'horny', 'masturbate', 'orgasm',
