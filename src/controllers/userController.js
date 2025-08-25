@@ -255,11 +255,15 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
     // Assuming peoplePreference in User model is an array of strings
     const providerPreferenceText = Array.isArray(provider.peoplePreference) ? provider.peoplePreference.join(' ') : (provider.peoplePreference || '');
     const providerId = provider._id;
+    
+    // Get search term from query parameters
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
 
-    logger.debug(`matchTaskers: Provider ${providerId} searching. Hobbies: [${providerHobbies.join(', ')}], Pref Text: "${providerPreferenceText}"`);
+    logger.debug(`matchTaskers: Provider ${providerId} searching. Search term: "${searchTerm}", Hobbies: [${providerHobbies.join(', ')}], Pref Text: "${providerPreferenceText}"`);
 
-    if (providerHobbies.length === 0 && !providerPreferenceText.trim()) {
-        logger.info(`matchTaskers: Provider ${providerId} has no preferences. Returning top-rated.`);
+    // If no preferences and no search term, return top-rated taskers
+    if (providerHobbies.length === 0 && !providerPreferenceText.trim() && !searchTerm) {
+        logger.info(`matchTaskers: Provider ${providerId} has no preferences or search term. Returning top-rated.`);
         const topTaskers = await User.find({ role: 'tasker', active: true, _id: { $ne: providerId } })
             .sort({ rating: -1, ratingCount: -1 }).limit(10)
             .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies skills');
@@ -269,10 +273,14 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
     const pipeline = [];
     pipeline.push({ $match: { role: 'tasker', active: true, _id: { $ne: providerId } } });
 
-    // Add text search if provider has preferences text
-    if (providerPreferenceText.trim()) {
-        pipeline.push({ $match: { $text: { $search: providerPreferenceText } } });
+    // Determine what to search for - prioritize explicit search term, then preferences
+    const searchText = searchTerm || providerPreferenceText.trim();
+    
+    // Add text search if we have search text
+    if (searchText) {
+        pipeline.push({ $match: { $text: { $search: searchText } } });
         pipeline.push({ $addFields: { textScore: { $meta: 'textScore' } } }); // Use textScore field name
+        logger.debug(`matchTaskers: Using text search for: "${searchText}"`);
     } else {
         pipeline.push({ $addFields: { textScore: 0 } }); // Default score if no text search
     }
@@ -316,8 +324,18 @@ export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
     ? provider.peoplePreference
     : (provider.peoplePreference ? [provider.peoplePreference] : []);
 
+  // Build search query
+  const searchQuery = { role: 'tasker', active: true, _id: { $ne: provider._id } };
+  
+  // Add text search if search parameter is provided
+  if (req.query.search && req.query.search.trim()) {
+    const searchTerm = req.query.search.trim();
+    searchQuery.$text = { $search: searchTerm };
+    logger.debug(`topMatchTaskersForProvider: Applying text search for term: "${searchTerm}"`);
+  }
+
   // Find all taskers except the current user
-  const taskers = await User.find({ role: 'tasker', active: true, _id: { $ne: provider._id } });
+  const taskers = await User.find(searchQuery);
 
   // Calculate match score for each tasker
   const scoredTaskers = taskers.map(tasker => {
