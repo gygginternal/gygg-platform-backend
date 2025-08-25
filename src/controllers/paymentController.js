@@ -18,19 +18,46 @@ export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2
 
 export const getPayments = catchAsync(async (req, res, next) => {
   const { status, payer, payee, page = 1, limit = 10 } = req.query;
-  console.log({ limit, page });
+  const currentUserId = req.user.id;
+  console.log({ limit, page, currentUserId });
 
   // Build the query object
   const query = {};
 
-  query.status = "succeeded"; // Filter by payment status
-
-  if (payer) {
-    query.payer = payer; // Filter by payer ID
+  // Apply status filter if provided, otherwise default to succeeded
+  if (status && status !== 'all') {
+    query.status = status;
+  } else {
+    query.status = "succeeded"; // Default filter by payment status
   }
 
-  if (payee) {
-    query.payee = payee; // Filter by payee ID
+  // Security: Ensure users can only see their own payments
+  // If specific payer/payee is requested, validate user has access
+  if (payer && payee) {
+    // Both specified - user must be either payer or payee
+    if (payer !== currentUserId && payee !== currentUserId) {
+      return next(new AppError("You can only view your own payments.", 403));
+    }
+    query.payer = payer;
+    query.payee = payee;
+  } else if (payer) {
+    // Only payer specified - user must be the payer
+    if (payer !== currentUserId) {
+      return next(new AppError("You can only view payments where you are the payer.", 403));
+    }
+    query.payer = payer;
+  } else if (payee) {
+    // Only payee specified - user must be the payee
+    if (payee !== currentUserId) {
+      return next(new AppError("You can only view payments where you are the payee.", 403));
+    }
+    query.payee = payee;
+  } else {
+    // No specific payer/payee - show all payments where user is involved
+    query.$or = [
+      { payer: currentUserId },
+      { payee: currentUserId }
+    ];
   }
 
   // Pagination parameters
