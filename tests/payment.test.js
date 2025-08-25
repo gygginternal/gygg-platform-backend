@@ -86,7 +86,7 @@ describe('Invoice PDF Endpoint', () => {
   it('should not allow unrelated user to download invoice PDF', async () => {
     const unrelatedUser = await User.create({
       email: 'unrelated@test.com',
-      password: 'password123',
+      password: 'Password123!',
       role: ['provider'],
       phoneNo: '+1234567899',
       dateOfBirth: '1970-01-01',
@@ -125,7 +125,7 @@ describe('Withdrawal Endpoints', () => {
       // Mock the stripe.balance.retrieve method
       const { stripe } = await import('../src/controllers/paymentController.js');
       const originalRetrieve = stripe.balance.retrieve;
-      stripe.balance.retrieve = jest.fn().mockResolvedValue(mockBalance);
+      stripe.balance.retrieve = () => Promise.resolve(mockBalance);
 
       try {
         const res = await request(app)
@@ -180,8 +180,8 @@ describe('Withdrawal Endpoints', () => {
       const originalBalanceRetrieve = stripe.balance.retrieve;
       const originalPayoutsCreate = stripe.payouts.create;
 
-      stripe.balance.retrieve = jest.fn().mockResolvedValue(mockBalance);
-      stripe.payouts.create = jest.fn().mockResolvedValue(mockPayout);
+      stripe.balance.retrieve = () => Promise.resolve(mockBalance);
+      stripe.payouts.create = () => Promise.resolve(mockPayout);
 
       try {
         const res = await request(app)
