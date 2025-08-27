@@ -468,7 +468,8 @@ export const addComment = catchAsync(async (req, res, next) => {
 // Route handler to delete a comment from a post
 export const deleteComment = catchAsync(async (req, res, next) => {
   const { postId, commentId } = req.params;
-  const post = await Post.findById(postId); // Find the post by ID
+  // Find the post by ID and populate comments for proper author comparison
+  const post = await Post.findById(postId).populate("comments.author", "firstName lastName profileImage");
 
   if (!post) {
     return next(new AppError("Post not found", 404)); // Handle if post not found
@@ -480,14 +481,32 @@ export const deleteComment = catchAsync(async (req, res, next) => {
     return next(new AppError("Comment not found", 404)); // Handle if comment not found
   }
 
-  // Handle both ObjectId and populated user object cases for comment author
+  // Check if the user is allowed to delete the comment (either the comment's author or an admin)
+  // We need to handle different cases for the comment.author field:
+  // 1. It could be a plain ObjectId
+  // 2. It could be a populated user object with an _id field
+  // 3. It could be a populated user object with an id field (virtual getter)
   let commentAuthorIdStr;
-  if (typeof comment.author === 'object' && comment.author._id) {
-    // If it's a populated user object, use the _id
-    commentAuthorIdStr = comment.author._id.toString();
-  } else {
-    // If it's an ObjectId, convert to string
-    commentAuthorIdStr = comment.author.toString();
+  
+  if (comment.author) {
+    if (typeof comment.author === 'object') {
+      // If it's a populated object, try to get the ID
+      if (comment.author._id) {
+        commentAuthorIdStr = comment.author._id.toString();
+      } else if (comment.author.id) {
+        commentAuthorIdStr = comment.author.id.toString();
+      }
+    } else {
+      // If it's already an ObjectId/string
+      commentAuthorIdStr = comment.author.toString();
+    }
+  }
+
+  // If we couldn't determine the comment author ID, deny permission
+  if (!commentAuthorIdStr) {
+    return next(
+      new AppError("Unable to verify comment ownership", 500)
+    );
   }
 
   // Check if the user is allowed to delete the comment (either the comment's author or an admin)
