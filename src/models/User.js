@@ -261,9 +261,23 @@ userSchema.virtual("fullName").get(function () {
 // ---------------- Indexes ---------------- //
 userSchema.index({ stripeAccountId: 1 });
 userSchema.index(
-  { peoplePreference: "text", bio: "text" },
+  { 
+    firstName: "text", 
+    lastName: "text", 
+    fullName: "text", 
+    peoplePreference: "text", 
+    bio: "text",
+    skills: "text"
+  },
   {
-    weights: { peoplePreference: 10, bio: 5 },
+    weights: { 
+      firstName: 15,
+      lastName: 15,
+      fullName: 20,
+      peoplePreference: 10, 
+      bio: 5,
+      skills: 8
+    },
     name: "TextSearchIndex",
   }
 );

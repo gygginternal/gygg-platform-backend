@@ -301,15 +301,15 @@ export const createPaymentIntentForContract = catchAsync(
       return next(new AppError("Tasker has not connected Stripe.", 400));
 
     const taskerStripeAccountId = contract.tasker.stripeAccountId;
-    
+
     // Validate that the Stripe account actually exists
     try {
       await stripe.accounts.retrieve(taskerStripeAccountId);
     } catch (error) {
       if (error.code === 'account_invalid' || error.type === 'StripePermissionError') {
         // Clear the invalid account ID from the user
-        await User.findByIdAndUpdate(contract.tasker._id, { 
-          $unset: { stripeAccountId: 1, stripeChargesEnabled: 1, stripePayoutsEnabled: 1 } 
+        await User.findByIdAndUpdate(contract.tasker._id, {
+          $unset: { stripeAccountId: 1, stripeChargesEnabled: 1, stripePayoutsEnabled: 1 }
         });
         return next(new AppError("Tasker's Stripe account is invalid. Please reconnect Stripe account.", 400));
       }
@@ -541,7 +541,7 @@ export const stripeWebhookHandler = async (req, res) => {
 // Endpoint to confirm payment success from frontend
 export const confirmPaymentSuccess = catchAsync(async (req, res, next) => {
   const { paymentIntentId } = req.body;
-  
+
   if (!paymentIntentId) {
     return next(new AppError('Payment Intent ID is required', 400));
   }
@@ -549,7 +549,7 @@ export const confirmPaymentSuccess = catchAsync(async (req, res, next) => {
   try {
     // Verify the payment intent with Stripe
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    
+
     if (paymentIntent.status !== 'succeeded') {
       return next(new AppError('Payment has not succeeded yet', 400));
     }
@@ -566,12 +566,12 @@ export const confirmPaymentSuccess = catchAsync(async (req, res, next) => {
     // Update payment status and details
     payment.status = "succeeded";
     payment.succeededAt = new Date();
-    
+
     // Calculate amounts from payment model
     let taxAmount = payment.taxAmount || 0;
     let amountAfterTax = payment.amountAfterTax || (paymentIntent.amount - taxAmount);
     let amountReceivedByPayee = payment.amountReceivedByPayee || 0;
-    
+
     if (payment.applicationFeeAmount != null) {
       amountReceivedByPayee = amountAfterTax - payment.applicationFeeAmount;
     }
@@ -860,13 +860,13 @@ export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
       `Error retrieving Stripe account ${user.stripeAccountId}:`,
       error
     );
-    
+
     // Handle specific Stripe errors
     if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
       // The account doesn't exist or is invalid, clear it from the user
       user.stripeAccountId = undefined;
       await user.save({ validateBeforeSave: false });
-      
+
       return res.status(200).json({
         status: "success",
         account: null,
@@ -877,7 +877,7 @@ export const getStripeAccountStatus = catchAsync(async (req, res, next) => {
         message: "Previous Stripe account was invalid and has been cleared"
       });
     }
-    
+
     return next(new AppError("Could not retrieve account status.", 500));
   }
 });
@@ -1053,7 +1053,7 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     });
   } catch (error) {
     logger.error(`Error processing withdrawal for user ${userId}:`, error);
-    
+
     // Handle specific Stripe errors
     if (error.type === 'StripeError') {
       switch (error.code) {
@@ -1067,7 +1067,7 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
           return next(new AppError(`Stripe error: ${error.message}`, 400));
       }
     }
-    
+
     return next(new AppError("Failed to process withdrawal request.", 500));
   }
 });

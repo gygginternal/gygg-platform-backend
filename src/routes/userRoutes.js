@@ -95,6 +95,7 @@ import {
   matchTaskers,
   uploadAlbumPhoto, getUserAlbum, deleteAlbumPhoto,
   topMatchTaskersForProvider,
+  searchTaskers,
   getPublicProfile
 } from '../controllers/userController.js';
 
@@ -424,11 +425,23 @@ router.delete('/me/album/:photoId', [
 const matchTaskersValidation = [
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 50 }).toInt(),
+    query('search').optional().isString().trim().isLength({ min: 1, max: 100 }),
 ];
 router.get('/match-taskers', restrictTo('provider'), matchTaskersValidation, validateRequest, matchTaskers);
 
 // Provider: Get top matching taskers by hobbies and personality
-router.get('/top-match-taskers', protect, restrictTo('provider'), topMatchTaskersForProvider);
+const topMatchTaskersValidation = [
+    query('search').optional().isString().trim().isLength({ min: 1, max: 100 }),
+];
+router.get('/top-match-taskers', protect, restrictTo('provider'), topMatchTaskersValidation, validateRequest, topMatchTaskersForProvider);
+
+// Public: Search taskers (available to all authenticated users)
+const searchTaskersValidation = [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 50 }).toInt(),
+    query('search').optional().isString().trim().isLength({ min: 1, max: 100 }),
+];
+router.get('/search-taskers', protect, searchTaskersValidation, validateRequest, searchTaskers);
 
 /**
  * ===============================

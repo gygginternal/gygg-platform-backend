@@ -362,6 +362,80 @@ export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
   });
 });
 
+// --- Controller: Search taskers (public, for all authenticated users) ---
+export const searchTaskers = catchAsync(async (req, res, next) => {
+    const currentUserId = req.user._id;
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
+
+    logger.debug(`searchTaskers: User ${currentUserId} searching. Search term: "${searchTerm}"`);
+
+    const pipeline = [];
+    
+    // Match taskers, exclude current user
+    pipeline.push({ 
+        $match: { 
+            role: 'tasker', 
+            active: true, 
+            _id: { $ne: currentUserId } 
+        } 
+    });
+
+    // Add text search if search term provided
+    if (searchTerm) {
+        pipeline.push({ $match: { $text: { $search: searchTerm } } });
+        pipeline.push({ $addFields: { textScore: { $meta: 'textScore' } } });
+        logger.debug(`searchTaskers: Using text search for: "${searchTerm}"`);
+    } else {
+        pipeline.push({ $addFields: { textScore: 0 } });
+    }
+
+    // Sort by text score (if searching), then by rating
+    pipeline.push({ 
+        $sort: searchTerm 
+            ? { textScore: -1, rating: -1, ratingCount: -1 } 
+            : { rating: -1, ratingCount: -1, createdAt: -1 }
+    });
+
+    // Pagination
+    pipeline.push({ $skip: skip });
+    pipeline.push({ $limit: limit });
+
+    // Project fields
+    pipeline.push({ 
+        $project: {
+            _id: 1, 
+            firstName: 1, 
+            lastName: 1, 
+            fullName: 1, 
+            profileImage: 1,
+            rating: 1, 
+            ratingCount: 1, 
+            bio: 1, 
+            hobbies: 1, 
+            skills: 1, 
+            address: 1,
+            location: 1,
+            city: 1,
+            state: 1,
+            ratePerHour: 1,
+            role: 1,
+            textScore: 1
+        }
+    });
+
+    const taskers = await User.aggregate(pipeline);
+    logger.info(`searchTaskers: Found ${taskers.length} taskers for user ${currentUserId}.`);
+    
+    res.status(200).json({ 
+        status: 'success', 
+        results: taskers.length, 
+        data: { taskers } 
+    });
+});
+
 // --- Controller: Get public profile ---
 export const getPublicProfile = catchAsync(async (req, res, next) => {
   const userId = req.params.userId;
