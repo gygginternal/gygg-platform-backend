@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "cross-env STRIPE_SECRET_KEY=sk_test_51RGtPuFdkW2xpfFKZ9T47ZzIxb4KtYzk91WABHY91B7Vm3WaNoKQjkWlqtOf1tudeTCUIKrs1G9x9oZpb8KV1fE9005XrgWmpm NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:stripe": "cross-env STRIPE_SECRET_KEY=sk_test_51RGtPuFdkW2xpfFKZ9T47ZzIxb4KtYzk91WABHY91B7Vm3WaNoKQjkWlqtOf1tudeTCUIKrs1G9x9oZpb8KV1fE9005XrgWmpm NODE_OPTIONS=--experimental-vm-modules jest __tests__/stripeOnboarding.test.js",
     "start": "node -r dotenv/config src/server.js",
     "dev": "nodemon -r dotenv/config src/server.js"
   },

@@ -14,7 +14,7 @@ import { Readable } from 'stream';
 import { generateInvoicePdf } from '../utils/invoicePdf.js';
 
 // Initialize Stripe with the secret key from environment variables
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-06-30.basil' });
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });
 
 export const getPayments = catchAsync(async (req, res, next) => {
   const { status, payer, payee, page = 1, limit = 10 } = req.query;
@@ -502,6 +502,61 @@ const handleChargeRefunded = async (dataObject) => {
   }
 };
 
+// Handler for account.updated events
+const handleAccountUpdated = async (account) => {
+  try {
+    console.log(`Account updated: ${account.id}`);
+    
+    // Find the user with this Stripe account ID
+    const user = await User.findOne({ stripeAccountId: account.id });
+    
+    if (!user) {
+      console.log(`No user found for Stripe account: ${account.id}`);
+      return;
+    }
+    
+    // Update user's Stripe account status
+    user.stripeChargesEnabled = account.charges_enabled;
+    user.stripePayoutsEnabled = account.payouts_enabled;
+    
+    // Check if onboarding is complete
+    const onboardingComplete = account.details_submitted && 
+                              account.charges_enabled && 
+                              account.payouts_enabled;
+    
+    // If onboarding is complete, we can update the user's onboarding status
+    if (onboardingComplete) {
+      // For taskers, mark onboarding as complete
+      if (user.role.includes('tasker')) {
+        user.isTaskerOnboardingComplete = true;
+      }
+      // For providers, mark onboarding as complete
+      if (user.role.includes('provider')) {
+        user.isProviderOnboardingComplete = true;
+      }
+    }
+    
+    // Save the updated user
+    await user.save({ validateBeforeSave: false });
+    
+    console.log(`✅ User ${user._id} Stripe account status updated. Onboarding complete: ${onboardingComplete}`);
+
+    // Check if user needs to complete additional requirements
+    if (account.currently_due && account.currently_due.length > 0) {
+      console.log(`Account ${account.id} has outstanding requirements:`, account.currently_due);
+      // You could send a notification to the user here
+      // await notifyUserToCompleteOnboarding(user, account.currently_due);
+    }
+
+    // Check for future requirements that need attention
+    if (account.eventually_due && account.eventually_due.length > 0) {
+      console.log(`Account ${account.id} has future requirements:`, account.eventually_due);
+    }
+  } catch (error) {
+    console.error(`❌ Error handling account.updated event: ${error.message}`);
+  }
+};
+
 // --- Stripe Webhook Handler ---
 export const stripeWebhookHandler = async (req, res) => {
   const sig = req.headers["stripe-signature"];
@@ -530,6 +585,9 @@ export const stripeWebhookHandler = async (req, res) => {
       break;
     case "payout.paid":
       await handlePayoutPaid(dataObject);
+      break;
+    case "account.updated":
+      await handleAccountUpdated(dataObject);
       break;
     default:
       break;
@@ -1008,7 +1066,7 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     const requestedAmount = Math.round(amount * 100); // Convert to cents
 
     if (requestedAmount > availableAmount) {
-      return next(new AppError(`Insufficient balance. Available: $${(availableAmount / 100).toFixed(2)}, Requested: $${amount}`, 400));
+      return next(new AppError(`Insufficient balance. Available: ${(availableAmount / 100).toFixed(2)}, Requested: ${amount}`, 400));
     }
 
     // Create payout to user's connected bank account
@@ -1021,7 +1079,7 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     });
 
     // Log the withdrawal for tracking
-    logger.info(`Withdrawal processed for user ${userId}: $${amount} (Payout ID: ${payout.id})`);
+    logger.info(`Withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payout.id})`);
 
     // Create a withdrawal record in the database (optional)
     const withdrawalRecord = new Payment({
@@ -1069,5 +1127,350 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     }
 
     return next(new AppError("Failed to process withdrawal request.", 500));
+  }
+});
+
+// --- Check Onboarding Status ---
+export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id).select("+stripeAccountId");
+  
+  if (!user) {
+    return next(new AppError("User not found.", 404));
+  }
+  
+  if (!user.stripeAccountId) {
+    return res.status(200).json({
+      status: "success",
+      data: {
+        onboardingComplete: false,
+        message: "No Stripe account connected"
+      }
+    });
+  }
+  
+  try {
+    // Retrieve the account from Stripe
+    const account = await stripe.accounts.retrieve(user.stripeAccountId);
+    
+    // Check if onboarding is complete
+    const onboardingComplete = account.details_submitted && 
+                              account.charges_enabled && 
+                              account.payouts_enabled;
+    
+    // Get account requirements if onboarding is not complete
+    let requirements = null;
+    if (!onboardingComplete && account.requirements) {
+      requirements = {
+        currentlyDue: account.requirements.currently_due,
+        eventuallyDue: account.requirements.eventually_due,
+        pastDue: account.requirements.past_due,
+        disabledReason: account.requirements.disabled_reason,
+      };
+    }
+    
+    res.status(200).json({
+      status: "success",
+      data: {
+        onboardingComplete,
+        accountId: user.stripeAccountId,
+        detailsSubmitted: account.details_submitted,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        requirements,
+        capabilities: {
+          cardPayments: account.capabilities?.card_payments,
+          transfers: account.capabilities?.transfers,
+        },
+        message: onboardingComplete 
+          ? "Onboarding complete" 
+          : "Onboarding incomplete"
+      }
+    });
+  } catch (error) {
+    console.error("Error checking onboarding status:", error);
+    
+    // Handle specific Stripe errors
+    if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
+      // The account doesn't exist or is invalid, clear it from the user
+      user.stripeAccountId = undefined;
+      await user.save({ validateBeforeSave: false });
+      
+      return res.status(200).json({
+        status: "success",
+        data: {
+          onboardingComplete: false,
+          message: "Previous Stripe account was invalid and has been cleared"
+        }
+      });
+    }
+    
+    return next(new AppError("Could not check onboarding status.", 500));
+  }
+});
+
+// --- Get Onboarding Requirements ---
+export const getOnboardingRequirements = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id).select("+stripeAccountId");
+  
+  if (!user) {
+    return next(new AppError("User not found.", 404));
+  }
+  
+  if (!user.stripeAccountId) {
+    return next(new AppError("No Stripe account connected.", 400));
+  }
+  
+  try {
+    // Retrieve the account from Stripe
+    const account = await stripe.accounts.retrieve(user.stripeAccountId);
+    
+    // Get account requirements
+    const requirements = {
+      currentlyDue: account.requirements?.currently_due || [],
+      eventuallyDue: account.requirements?.eventually_due || [],
+      pastDue: account.requirements?.past_due || [],
+      disabledReason: account.requirements?.disabled_reason || null,
+    };
+    
+    // Check capability statuses
+    const capabilities = {
+      cardPayments: account.capabilities?.card_payments || 'inactive',
+      transfers: account.capabilities?.transfers || 'inactive',
+    };
+    
+    res.status(200).json({
+      status: "success",
+      data: {
+        accountId: user.stripeAccountId,
+        detailsSubmitted: account.details_submitted,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        requirements,
+        capabilities,
+        businessProfile: {
+          name: account.business_profile?.name || null,
+          url: account.business_profile?.url || null,
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Error getting onboarding requirements:", error);
+    
+    // Handle specific Stripe errors
+    if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
+      // The account doesn't exist or is invalid, clear it from the user
+      user.stripeAccountId = undefined;
+      await user.save({ validateBeforeSave: false });
+      
+      return next(new AppError("Your Stripe account is invalid and has been cleared. Please create a new one.", 400));
+    }
+    
+    return next(new AppError("Could not retrieve onboarding requirements.", 500));
+  }
+});
+
+// --- Create Stripe Connected Account for User ---
+export const createConnectedAccount = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id);
+  if (!user) return next(new AppError("User not found.", 404));
+
+  // If user already has a Stripe account, return the existing account info
+    if (user.stripeAccountId) {
+      // Retrieve the existing account to check its status
+      try {
+        const account = await stripe.accounts.retrieve(user.stripeAccountId);
+        
+        // Check if the account is fully onboarded
+        const isOnboarded = account.details_submitted && 
+                           account.charges_enabled && 
+                           account.payouts_enabled;
+        
+        return res.status(200).json({
+          status: "success",
+          message: "Connected account already exists",
+          data: {
+            accountId: user.stripeAccountId,
+            isOnboarded,
+            detailsSubmitted: account.details_submitted,
+            chargesEnabled: account.charges_enabled,
+            payoutsEnabled: account.payouts_enabled,
+            accountLinkNeeded: !isOnboarded
+          }
+        });
+      } catch (error) {
+        // If account retrieval fails, we'll create a new one
+        // Continue to create a new account
+      }
+    }
+
+  try {
+    // Prepare account creation data with prefilled information
+    const accountData = {
+      type: "express",
+      country: "CA", // Default to Canada, but can be changed based on user's location
+      email: user.email,
+      business_type: "individual",
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      settings: {
+        payouts: {
+          schedule: {
+            interval: "manual", // Platform will trigger payouts manually
+          },
+        },
+      },
+    };
+
+    // Prefill individual information if available
+    if (user.firstName || user.lastName) {
+      accountData.individual = {};
+      if (user.firstName) accountData.individual.first_name = user.firstName;
+      if (user.lastName) accountData.individual.last_name = user.lastName;
+      if (user.email) accountData.individual.email = user.email;
+      
+      // Add phone if available
+      if (user.phone) accountData.individual.phone = user.phone;
+    }
+
+    // Create a new Stripe Express account
+    const account = await stripe.accounts.create(accountData);
+
+    // Save the account ID to the user document
+    user.stripeAccountId = account.id;
+    await user.save({ validateBeforeSave: false });
+
+    // Check if the account is fully onboarded (should be false for a new account)
+    const isOnboarded = account.details_submitted && 
+                       account.charges_enabled && 
+                       account.payouts_enabled;
+
+    res.status(201).json({
+      status: "success",
+      message: "Connected account created successfully",
+      data: {
+        accountId: account.id,
+        isOnboarded,
+        detailsSubmitted: account.details_submitted,
+        chargesEnabled: account.charges_enabled,
+        payoutsEnabled: account.payouts_enabled,
+        accountLinkNeeded: !isOnboarded
+      }
+    });
+  } catch (error) {
+    console.error('Create Connected Account Error:', {
+      type: error.type,
+      code: error.code,
+      message: error.message
+    });
+    return next(new AppError("Could not create connected account. Please try again.", 500));
+  }
+});
+
+// --- Initiate Account Session for Onboarding ---
+export const initiateAccountSession = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id).select("+stripeAccountId");
+  
+  if (!user) {
+    return next(new AppError("User not found.", 404));
+  }
+  
+  if (!user.stripeAccountId) {
+    return next(new AppError("No connected Stripe account found. Please create one first.", 400));
+  }
+  
+  try {
+    // Retrieve the account to verify it exists
+    const account = await stripe.accounts.retrieve(user.stripeAccountId);
+    
+    // Check if the request is for embedded onboarding (based on a query parameter or header)
+    const useEmbedded = req.query.embedded === 'true' || req.get('X-Embedded-Onboarding') === 'true';
+    
+    if (useEmbedded) {
+      // Create an Account Session for embedded onboarding
+      const accountSession = await stripe.accountSessions.create({
+        account: user.stripeAccountId,
+        components: {
+          account_onboarding: {
+            enabled: true,
+            features: {
+              // For Express accounts, external_account_collection is enabled by default
+              // and cannot be disabled - this is required for bank account collection
+              external_account_collection: true,
+            },
+          },
+        },
+      });
+      
+      // Validate the client secret format
+      const isValidFormat = accountSession.client_secret && 
+                           accountSession.client_secret.startsWith('accs_secret__') && 
+                           accountSession.client_secret.length === 60;
+      
+      if (!isValidFormat) {
+        return next(new AppError("Invalid client secret format generated by Stripe", 500));
+      }
+      
+      // Check account status
+      const isOnboarded = account.details_submitted && 
+                         account.charges_enabled && 
+                         account.payouts_enabled;
+      res.status(200).json({
+        status: "success",
+        data: {
+          clientSecret: accountSession.client_secret,
+          accountId: user.stripeAccountId,
+          isOnboarded,
+          detailsSubmitted: account.details_submitted,
+          chargesEnabled: account.charges_enabled,
+          payoutsEnabled: account.payouts_enabled,
+        }
+      });
+    } else {
+      // Create an Account Link for redirect-based onboarding (fallback approach)
+      // This is more reliable than embedded checkout
+      const accountLink = await stripe.accountLinks.create({
+        account: user.stripeAccountId,
+        refresh_url: `${process.env.FRONTEND_URL}/settings?tab=payment&onboarding_status=refresh`,
+        return_url: `${process.env.FRONTEND_URL}/settings?tab=payment&onboarding_status=success`,
+        type: "account_onboarding",
+      });
+      
+      // Check account status
+      const isOnboarded = account.details_submitted && 
+                         account.charges_enabled && 
+                         account.payouts_enabled;
+      
+      res.status(200).json({
+        status: "success",
+        data: {
+          url: accountLink.url,
+          accountId: user.stripeAccountId,
+          isOnboarded,
+          detailsSubmitted: account.details_submitted,
+          chargesEnabled: account.charges_enabled,
+          payoutsEnabled: account.payouts_enabled,
+        }
+      });
+    }
+  } catch (error) {
+    // Handle specific Stripe errors
+    if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
+      // The account doesn't exist or is invalid, clear it from the user
+      user.stripeAccountId = undefined;
+      await user.save({ validateBeforeSave: false });
+      
+      return next(new AppError("Your Stripe account is invalid and has been cleared. Please create a new one.", 400));
+    }
+    
+    // Log the error for debugging
+    console.error('Stripe Account Session Error:', {
+      type: error.type,
+      code: error.code,
+      message: error.message
+    });
+    
+    return next(new AppError("Could not initiate onboarding session. Please try again.", 500));
   }
 });

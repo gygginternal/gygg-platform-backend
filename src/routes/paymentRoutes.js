@@ -12,6 +12,10 @@ import {
   getBalance,
   processWithdrawal,
   confirmPaymentSuccess,
+  createConnectedAccount, // Import the new controller function
+  initiateAccountSession, // Import the new controller function
+  checkOnboardingStatus, // Import the new controller function
+  getOnboardingRequirements, // Import the new controller function
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -147,6 +151,38 @@ router.get(
   ],
   validateRequest,
   getInvoicePdf
+);
+
+// Route to create a Stripe connected account for the user
+router.post(
+  "/create-connected-account",
+  protect,
+  restrictTo("tasker", "provider"),
+  createConnectedAccount
+);
+
+// Route to initiate a Stripe Account Session for onboarding
+router.post(
+  "/initiate-account-session",
+  protect,
+  restrictTo("tasker", "provider"),
+  initiateAccountSession
+);
+
+// Route to check onboarding status
+router.get(
+  "/onboarding-status",
+  protect,
+  restrictTo("tasker", "provider"),
+  checkOnboardingStatus
+);
+
+// Route to get detailed onboarding requirements
+router.get(
+  "/onboarding-requirements",
+  protect,
+  restrictTo("tasker", "provider"),
+  getOnboardingRequirements
 );
 
 export default router;
