@@ -506,24 +506,24 @@ const handleChargeRefunded = async (dataObject) => {
 const handleAccountUpdated = async (account) => {
   try {
     console.log(`Account updated: ${account.id}`);
-    
+
     // Find the user with this Stripe account ID
     const user = await User.findOne({ stripeAccountId: account.id });
-    
+
     if (!user) {
       console.log(`No user found for Stripe account: ${account.id}`);
       return;
     }
-    
+
     // Update user's Stripe account status
     user.stripeChargesEnabled = account.charges_enabled;
     user.stripePayoutsEnabled = account.payouts_enabled;
-    
+
     // Check if onboarding is complete
-    const onboardingComplete = account.details_submitted && 
-                              account.charges_enabled && 
-                              account.payouts_enabled;
-    
+    const onboardingComplete = account.details_submitted &&
+      account.charges_enabled &&
+      account.payouts_enabled;
+
     // If onboarding is complete, we can update the user's onboarding status
     if (onboardingComplete) {
       // For taskers, mark onboarding as complete
@@ -535,10 +535,10 @@ const handleAccountUpdated = async (account) => {
         user.isProviderOnboardingComplete = true;
       }
     }
-    
+
     // Save the updated user
     await user.save({ validateBeforeSave: false });
-    
+
     console.log(`✅ User ${user._id} Stripe account status updated. Onboarding complete: ${onboardingComplete}`);
 
     // Check if user needs to complete additional requirements
@@ -1004,7 +1004,7 @@ export const getInvoicePdf = catchAsync(async (req, res, next) => {
   }
 });
 
-// --- Get Available Balance for Withdrawal ---
+// --- Get Available Balance for Withdrawal (Taskers only) ---
 export const getBalance = catchAsync(async (req, res, next) => {
   const userId = req.user.id;
 
@@ -1036,6 +1036,317 @@ export const getBalance = catchAsync(async (req, res, next) => {
   } catch (error) {
     logger.error(`Error retrieving balance for user ${userId}:`, error);
     return next(new AppError("Failed to retrieve balance from Stripe.", 500));
+  }
+});
+
+// --- Get Comprehensive Earnings Summary ---
+export const getEarningsSummary = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  const { period = 'all', startDate, endDate } = req.query;
+
+  const user = await User.findById(userId).select("+stripeAccountId role");
+  if (!user) {
+    return next(new AppError("User not found.", 404));
+  }
+
+  try {
+    // Build date filter
+    let dateFilter = {};
+    if (period !== 'all') {
+      const now = new Date();
+      switch (period) {
+        case 'week':
+          dateFilter.createdAt = { $gte: new Date(now.setDate(now.getDate() - 7)) };
+          break;
+        case 'month':
+          dateFilter.createdAt = { $gte: new Date(now.setMonth(now.getMonth() - 1)) };
+          break;
+        case 'year':
+          dateFilter.createdAt = { $gte: new Date(now.setFullYear(now.getFullYear() - 1)) };
+          break;
+        case 'custom':
+          if (startDate && endDate) {
+            dateFilter.createdAt = {
+              $gte: new Date(startDate),
+              $lte: new Date(endDate)
+            };
+          }
+          break;
+      }
+    }
+
+    let summary = {};
+
+    // For Taskers - Money they've earned
+    if (user.role.includes('tasker')) {
+      const taskerPayments = await Payment.aggregate([
+        {
+          $match: {
+            payee: new mongoose.Types.ObjectId(userId),
+            status: 'succeeded',
+            type: 'payment',
+            ...dateFilter
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalEarned: { $sum: '$amountReceivedByPayee' },
+            totalContracts: { $sum: 1 },
+            totalTaxesPaid: { $sum: '$taskerTaxAmount' },
+            averageEarning: { $avg: '$amountReceivedByPayee' }
+          }
+        }
+      ]);
+
+      const withdrawals = await Payment.aggregate([
+        {
+          $match: {
+            payer: new mongoose.Types.ObjectId(userId),
+            type: 'withdrawal',
+            status: 'succeeded',
+            ...dateFilter
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalWithdrawn: { $sum: '$amount' },
+            withdrawalCount: { $sum: 1 }
+          }
+        }
+      ]);
+
+      summary.tasker = {
+        totalEarned: taskerPayments[0]?.totalEarned || 0,
+        totalEarnedFormatted: ((taskerPayments[0]?.totalEarned || 0) / 100).toFixed(2),
+        totalContracts: taskerPayments[0]?.totalContracts || 0,
+        totalTaxesPaid: taskerPayments[0]?.totalTaxesPaid || 0,
+        totalTaxesPaidFormatted: ((taskerPayments[0]?.totalTaxesPaid || 0) / 100).toFixed(2),
+        averageEarning: taskerPayments[0]?.averageEarning || 0,
+        averageEarningFormatted: ((taskerPayments[0]?.averageEarning || 0) / 100).toFixed(2),
+        totalWithdrawn: withdrawals[0]?.totalWithdrawn || 0,
+        totalWithdrawnFormatted: ((withdrawals[0]?.totalWithdrawn || 0) / 100).toFixed(2),
+        withdrawalCount: withdrawals[0]?.withdrawalCount || 0,
+        pendingBalance: 0, // Will be filled from Stripe
+        availableBalance: 0 // Will be filled from Stripe
+      };
+
+      // Get Stripe balance if account is connected
+      if (user.stripeAccountId) {
+        try {
+          const balance = await stripe.balance.retrieve({
+            stripeAccount: user.stripeAccountId,
+          });
+          const available = balance.available.find(b => b.currency === 'usd') || { amount: 0 };
+          const pending = balance.pending.find(b => b.currency === 'usd') || { amount: 0 };
+
+          summary.tasker.availableBalance = available.amount;
+          summary.tasker.availableBalanceFormatted = (available.amount / 100).toFixed(2);
+          summary.tasker.pendingBalance = pending.amount;
+          summary.tasker.pendingBalanceFormatted = (pending.amount / 100).toFixed(2);
+        } catch (stripeError) {
+          console.error('Error fetching Stripe balance:', stripeError);
+        }
+      }
+    }
+
+    // For Providers - Money they've spent
+    if (user.role.includes('provider')) {
+      const providerPayments = await Payment.aggregate([
+        {
+          $match: {
+            payer: new mongoose.Types.ObjectId(userId),
+            status: 'succeeded',
+            type: 'payment',
+            ...dateFilter
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalSpent: { $sum: '$totalProviderPayment' },
+            totalServiceCosts: { $sum: '$amount' },
+            totalPlatformFees: { $sum: '$applicationFeeAmount' },
+            totalTaxesPaid: { $sum: '$providerTaxAmount' },
+            totalContracts: { $sum: 1 },
+            averageSpent: { $avg: '$totalProviderPayment' }
+          }
+        }
+      ]);
+
+      summary.provider = {
+        totalSpent: providerPayments[0]?.totalSpent || 0,
+        totalSpentFormatted: ((providerPayments[0]?.totalSpent || 0) / 100).toFixed(2),
+        totalServiceCosts: providerPayments[0]?.totalServiceCosts || 0,
+        totalServiceCostsFormatted: ((providerPayments[0]?.totalServiceCosts || 0) / 100).toFixed(2),
+        totalPlatformFees: providerPayments[0]?.totalPlatformFees || 0,
+        totalPlatformFeesFormatted: ((providerPayments[0]?.totalPlatformFees || 0) / 100).toFixed(2),
+        totalTaxesPaid: providerPayments[0]?.totalTaxesPaid || 0,
+        totalTaxesPaidFormatted: ((providerPayments[0]?.totalTaxesPaid || 0) / 100).toFixed(2),
+        totalContracts: providerPayments[0]?.totalContracts || 0,
+        averageSpent: providerPayments[0]?.averageSpent || 0,
+        averageSpentFormatted: ((providerPayments[0]?.averageSpent || 0) / 100).toFixed(2)
+      };
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        period,
+        summary,
+        currency: 'USD'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting earnings summary:', error);
+    return next(new AppError("Failed to retrieve earnings summary.", 500));
+  }
+});
+
+// --- Get Detailed Payment History ---
+export const getPaymentHistory = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  const {
+    page = 1,
+    limit = 10,
+    type = 'all', // 'earned', 'spent', 'withdrawals', 'all'
+    status = 'all',
+    startDate,
+    endDate
+  } = req.query;
+
+  const user = await User.findById(userId).select("role");
+  if (!user) {
+    return next(new AppError("User not found.", 404));
+  }
+
+  try {
+    // Build query filter
+    let matchFilter = {};
+
+    // Date filter
+    if (startDate && endDate) {
+      matchFilter.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Status filter
+    if (status !== 'all') {
+      matchFilter.status = status;
+    }
+
+    // Type and role-based filtering
+    let queries = [];
+
+    if (type === 'all' || type === 'earned') {
+      if (user.role.includes('tasker')) {
+        queries.push({
+          ...matchFilter,
+          payee: new mongoose.Types.ObjectId(userId),
+          type: 'payment'
+        });
+      }
+    }
+
+    if (type === 'all' || type === 'spent') {
+      if (user.role.includes('provider')) {
+        queries.push({
+          ...matchFilter,
+          payer: new mongoose.Types.ObjectId(userId),
+          type: 'payment'
+        });
+      }
+    }
+
+    if (type === 'all' || type === 'withdrawals') {
+      if (user.role.includes('tasker')) {
+        queries.push({
+          ...matchFilter,
+          payer: new mongoose.Types.ObjectId(userId),
+          type: 'withdrawal'
+        });
+      }
+    }
+
+    if (queries.length === 0) {
+      return res.status(200).json({
+        status: "success",
+        data: {
+          payments: [],
+          pagination: {
+            currentPage: 1,
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: parseInt(limit)
+          }
+        }
+      });
+    }
+
+    // Combine queries with $or
+    const finalFilter = queries.length === 1 ? queries[0] : { $or: queries };
+
+    // Get total count
+    const totalItems = await Payment.countDocuments(finalFilter);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    // Get payments with pagination
+    const payments = await Payment.find(finalFilter)
+      .populate('contract', 'gig status')
+      .populate('gig', 'title')
+      .populate('payer', 'firstName lastName email')
+      .populate('payee', 'firstName lastName email')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
+
+    // Format payments for response
+    const formattedPayments = payments.map(payment => ({
+      id: payment._id,
+      type: payment.type,
+      status: payment.status,
+      amount: payment.amount,
+      amountFormatted: (payment.amount / 100).toFixed(2),
+      amountReceivedByPayee: payment.amountReceivedByPayee,
+      amountReceivedFormatted: (payment.amountReceivedByPayee / 100).toFixed(2),
+      totalProviderPayment: payment.totalProviderPayment,
+      totalProviderPaymentFormatted: (payment.totalProviderPayment / 100).toFixed(2),
+      applicationFeeAmount: payment.applicationFeeAmount,
+      applicationFeeFormatted: (payment.applicationFeeAmount / 100).toFixed(2),
+      taxAmount: payment.taxAmount,
+      taxAmountFormatted: (payment.taxAmount / 100).toFixed(2),
+      currency: payment.currency.toUpperCase(),
+      description: payment.description,
+      createdAt: payment.createdAt,
+      succeededAt: payment.succeededAt,
+      contract: payment.contract,
+      gig: payment.gig,
+      payer: payment.payer,
+      payee: payment.payee,
+      // Determine user's role in this payment
+      userRole: payment.payer._id.toString() === userId ? 'payer' : 'payee'
+    }));
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        payments: formattedPayments,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalItems,
+          itemsPerPage: parseInt(limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting payment history:', error);
+    return next(new AppError("Failed to retrieve payment history.", 500));
   }
 });
 
@@ -1133,11 +1444,11 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
 // --- Check Onboarding Status ---
 export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.user.id).select("+stripeAccountId");
-  
+
   if (!user) {
     return next(new AppError("User not found.", 404));
   }
-  
+
   if (!user.stripeAccountId) {
     return res.status(200).json({
       status: "success",
@@ -1147,16 +1458,16 @@ export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
       }
     });
   }
-  
+
   try {
     // Retrieve the account from Stripe
     const account = await stripe.accounts.retrieve(user.stripeAccountId);
-    
+
     // Check if onboarding is complete
-    const onboardingComplete = account.details_submitted && 
-                              account.charges_enabled && 
-                              account.payouts_enabled;
-    
+    const onboardingComplete = account.details_submitted &&
+      account.charges_enabled &&
+      account.payouts_enabled;
+
     // Get account requirements if onboarding is not complete
     let requirements = null;
     if (!onboardingComplete && account.requirements) {
@@ -1167,7 +1478,7 @@ export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
         disabledReason: account.requirements.disabled_reason,
       };
     }
-    
+
     res.status(200).json({
       status: "success",
       data: {
@@ -1181,20 +1492,20 @@ export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
           cardPayments: account.capabilities?.card_payments,
           transfers: account.capabilities?.transfers,
         },
-        message: onboardingComplete 
-          ? "Onboarding complete" 
+        message: onboardingComplete
+          ? "Onboarding complete"
           : "Onboarding incomplete"
       }
     });
   } catch (error) {
     console.error("Error checking onboarding status:", error);
-    
+
     // Handle specific Stripe errors
     if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
       // The account doesn't exist or is invalid, clear it from the user
       user.stripeAccountId = undefined;
       await user.save({ validateBeforeSave: false });
-      
+
       return res.status(200).json({
         status: "success",
         data: {
@@ -1203,7 +1514,7 @@ export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
         }
       });
     }
-    
+
     return next(new AppError("Could not check onboarding status.", 500));
   }
 });
@@ -1211,19 +1522,19 @@ export const checkOnboardingStatus = catchAsync(async (req, res, next) => {
 // --- Get Onboarding Requirements ---
 export const getOnboardingRequirements = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.user.id).select("+stripeAccountId");
-  
+
   if (!user) {
     return next(new AppError("User not found.", 404));
   }
-  
+
   if (!user.stripeAccountId) {
     return next(new AppError("No Stripe account connected.", 400));
   }
-  
+
   try {
     // Retrieve the account from Stripe
     const account = await stripe.accounts.retrieve(user.stripeAccountId);
-    
+
     // Get account requirements
     const requirements = {
       currentlyDue: account.requirements?.currently_due || [],
@@ -1231,13 +1542,13 @@ export const getOnboardingRequirements = catchAsync(async (req, res, next) => {
       pastDue: account.requirements?.past_due || [],
       disabledReason: account.requirements?.disabled_reason || null,
     };
-    
+
     // Check capability statuses
     const capabilities = {
       cardPayments: account.capabilities?.card_payments || 'inactive',
       transfers: account.capabilities?.transfers || 'inactive',
     };
-    
+
     res.status(200).json({
       status: "success",
       data: {
@@ -1255,16 +1566,16 @@ export const getOnboardingRequirements = catchAsync(async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error getting onboarding requirements:", error);
-    
+
     // Handle specific Stripe errors
     if (error.type === 'StripePermissionError' && error.code === 'account_invalid') {
       // The account doesn't exist or is invalid, clear it from the user
       user.stripeAccountId = undefined;
       await user.save({ validateBeforeSave: false });
-      
+
       return next(new AppError("Your Stripe account is invalid and has been cleared. Please create a new one.", 400));
     }
-    
+
     return next(new AppError("Could not retrieve onboarding requirements.", 500));
   }
 });
@@ -1275,33 +1586,33 @@ export const createConnectedAccount = catchAsync(async (req, res, next) => {
   if (!user) return next(new AppError("User not found.", 404));
 
   // If user already has a Stripe account, return the existing account info
-    if (user.stripeAccountId) {
-      // Retrieve the existing account to check its status
-      try {
-        const account = await stripe.accounts.retrieve(user.stripeAccountId);
-        
-        // Check if the account is fully onboarded
-        const isOnboarded = account.details_submitted && 
-                           account.charges_enabled && 
-                           account.payouts_enabled;
-        
-        return res.status(200).json({
-          status: "success",
-          message: "Connected account already exists",
-          data: {
-            accountId: user.stripeAccountId,
-            isOnboarded,
-            detailsSubmitted: account.details_submitted,
-            chargesEnabled: account.charges_enabled,
-            payoutsEnabled: account.payouts_enabled,
-            accountLinkNeeded: !isOnboarded
-          }
-        });
-      } catch (error) {
-        // If account retrieval fails, we'll create a new one
-        // Continue to create a new account
-      }
+  if (user.stripeAccountId) {
+    // Retrieve the existing account to check its status
+    try {
+      const account = await stripe.accounts.retrieve(user.stripeAccountId);
+
+      // Check if the account is fully onboarded
+      const isOnboarded = account.details_submitted &&
+        account.charges_enabled &&
+        account.payouts_enabled;
+
+      return res.status(200).json({
+        status: "success",
+        message: "Connected account already exists",
+        data: {
+          accountId: user.stripeAccountId,
+          isOnboarded,
+          detailsSubmitted: account.details_submitted,
+          chargesEnabled: account.charges_enabled,
+          payoutsEnabled: account.payouts_enabled,
+          accountLinkNeeded: !isOnboarded
+        }
+      });
+    } catch (error) {
+      // If account retrieval fails, we'll create a new one
+      // Continue to create a new account
     }
+  }
 
   try {
     // Prepare account creation data with prefilled information
@@ -1329,7 +1640,7 @@ export const createConnectedAccount = catchAsync(async (req, res, next) => {
       if (user.firstName) accountData.individual.first_name = user.firstName;
       if (user.lastName) accountData.individual.last_name = user.lastName;
       if (user.email) accountData.individual.email = user.email;
-      
+
       // Add phone if available
       if (user.phone) accountData.individual.phone = user.phone;
     }
@@ -1342,9 +1653,9 @@ export const createConnectedAccount = catchAsync(async (req, res, next) => {
     await user.save({ validateBeforeSave: false });
 
     // Check if the account is fully onboarded (should be false for a new account)
-    const isOnboarded = account.details_submitted && 
-                       account.charges_enabled && 
-                       account.payouts_enabled;
+    const isOnboarded = account.details_submitted &&
+      account.charges_enabled &&
+      account.payouts_enabled;
 
     res.status(201).json({
       status: "success",
@@ -1371,22 +1682,22 @@ export const createConnectedAccount = catchAsync(async (req, res, next) => {
 // --- Initiate Account Session for Onboarding ---
 export const initiateAccountSession = catchAsync(async (req, res, next) => {
   const user = await User.findById(req.user.id).select("+stripeAccountId");
-  
+
   if (!user) {
     return next(new AppError("User not found.", 404));
   }
-  
+
   if (!user.stripeAccountId) {
     return next(new AppError("No connected Stripe account found. Please create one first.", 400));
   }
-  
+
   try {
     // Retrieve the account to verify it exists
     const account = await stripe.accounts.retrieve(user.stripeAccountId);
-    
+
     // Check if the request is for embedded onboarding (based on a query parameter or header)
     const useEmbedded = req.query.embedded === 'true' || req.get('X-Embedded-Onboarding') === 'true';
-    
+
     if (useEmbedded) {
       // Create an Account Session for embedded onboarding
       const accountSession = await stripe.accountSessions.create({
@@ -1402,20 +1713,20 @@ export const initiateAccountSession = catchAsync(async (req, res, next) => {
           },
         },
       });
-      
+
       // Validate the client secret format
-      const isValidFormat = accountSession.client_secret && 
-                           accountSession.client_secret.startsWith('accs_secret__') && 
-                           accountSession.client_secret.length === 60;
-      
+      const isValidFormat = accountSession.client_secret &&
+        accountSession.client_secret.startsWith('accs_secret__') &&
+        accountSession.client_secret.length === 60;
+
       if (!isValidFormat) {
         return next(new AppError("Invalid client secret format generated by Stripe", 500));
       }
-      
+
       // Check account status
-      const isOnboarded = account.details_submitted && 
-                         account.charges_enabled && 
-                         account.payouts_enabled;
+      const isOnboarded = account.details_submitted &&
+        account.charges_enabled &&
+        account.payouts_enabled;
       res.status(200).json({
         status: "success",
         data: {
@@ -1436,12 +1747,12 @@ export const initiateAccountSession = catchAsync(async (req, res, next) => {
         return_url: `${process.env.FRONTEND_URL}/settings?tab=payment&onboarding_status=success`,
         type: "account_onboarding",
       });
-      
+
       // Check account status
-      const isOnboarded = account.details_submitted && 
-                         account.charges_enabled && 
-                         account.payouts_enabled;
-      
+      const isOnboarded = account.details_submitted &&
+        account.charges_enabled &&
+        account.payouts_enabled;
+
       res.status(200).json({
         status: "success",
         data: {
@@ -1460,17 +1771,17 @@ export const initiateAccountSession = catchAsync(async (req, res, next) => {
       // The account doesn't exist or is invalid, clear it from the user
       user.stripeAccountId = undefined;
       await user.save({ validateBeforeSave: false });
-      
+
       return next(new AppError("Your Stripe account is invalid and has been cleared. Please create a new one.", 400));
     }
-    
+
     // Log the error for debugging
     console.error('Stripe Account Session Error:', {
       type: error.type,
       code: error.code,
       message: error.message
     });
-    
+
     return next(new AppError("Could not initiate onboarding session. Please try again.", 500));
   }
 });

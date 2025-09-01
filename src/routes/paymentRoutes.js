@@ -16,6 +16,8 @@ import {
   initiateAccountSession, // Import the new controller function
   checkOnboardingStatus, // Import the new controller function
   getOnboardingRequirements, // Import the new controller function
+  getEarningsSummary, // Import the new earnings summary function
+  getPaymentHistory, // Import the new payment history function
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -46,6 +48,26 @@ router.get(
   ],
   validateRequest,
   getBalance
+);
+
+// Route to get comprehensive earnings summary
+router.get(
+  "/earnings-summary",
+  [
+    restrictTo("provider", "tasker"), // Both providers and taskers can view earnings
+  ],
+  validateRequest,
+  getEarningsSummary
+);
+
+// Route to get detailed payment history
+router.get(
+  "/payment-history",
+  [
+    restrictTo("provider", "tasker"), // Both providers and taskers can view payment history
+  ],
+  validateRequest,
+  getPaymentHistory
 );
 
 // Route to process withdrawal request
