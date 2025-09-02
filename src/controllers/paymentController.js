@@ -11,7 +11,7 @@ import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
-import { generateInvoicePdf } from '../utils/invoicePdf.js';
+import { generateInvoicePdf } from '../utils/invoicePdf_improved.js';
 
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });

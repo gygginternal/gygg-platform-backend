@@ -63,13 +63,19 @@ export const createOffer = catchAsync(async (req, res, next) => {
 export const listGigApplications = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
 
+  // Fetch the gig to get provider's preferences
+  const gig = await Gig.findById(gigId).populate('postedBy', 'hobbies peoplePreference skills');
+  if (!gig) {
+    return next(new AppError("Gig not found.", 404));
+  }
+
   // Fetch applications for the gig, excluding those with status "cancelled"
   const applications = await Application.find({
     gig: gigId,
     status: { $ne: "cancelled" },
-  }).populate("user");
+  }).populate("user", "firstName lastName email bio hobbies skills peoplePreference profileImage address rating ratingCount");
 
-  // Format the response to match the desired structure
+  // Calculate compatibility scores and format applications
   const formattedApplications = applications.map((application) => {
     const user = application.user;
     
@@ -82,6 +88,9 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
     } else if (user.address && user.address.state) {
       location = user.address.state;
     }
+
+    // Calculate compatibility score based on hobbies and preferences
+    const compatibilityScore = calculateCompatibilityScore(gig.postedBy, user);
     
     return {
       id: application._id,
@@ -89,19 +98,100 @@ export const listGigApplications = catchAsync(async (req, res, next) => {
       location: location,
       description: user.bio || "No bio provided",
       services: user.skills || [],
+      hobbies: user.hobbies || [],
       image: user.profileImage || "/default.png",
       status: application.status,
+      rating: user.rating || 0,
+      ratingCount: user.ratingCount || 0,
+      compatibilityScore: compatibilityScore,
+      matchingHobbies: getMatchingHobbies(gig.postedBy.hobbies || [], user.hobbies || []),
+      matchingSkills: getMatchingSkills(gig.skills || [], user.skills || []),
     };
+  });
+
+  // Sort applications by compatibility score (highest first), then by rating
+  const sortedApplications = formattedApplications.sort((a, b) => {
+    // First sort by compatibility score
+    if (b.compatibilityScore !== a.compatibilityScore) {
+      return b.compatibilityScore - a.compatibilityScore;
+    }
+    // Then by rating if compatibility scores are equal
+    return b.rating - a.rating;
   });
 
   res.status(200).json({
     status: "success",
-    results: formattedApplications.length,
+    results: sortedApplications.length,
     data: {
-      applications: formattedApplications,
+      applications: sortedApplications,
     },
   });
 });
+
+// Helper function to calculate compatibility score between provider and tasker
+function calculateCompatibilityScore(provider, tasker) {
+  let score = 0;
+  const maxScore = 100;
+
+  // Hobby matching (40% of total score)
+  const providerHobbies = provider.hobbies || [];
+  const taskerHobbies = tasker.hobbies || [];
+  const matchingHobbies = getMatchingHobbies(providerHobbies, taskerHobbies);
+  
+  if (providerHobbies.length > 0) {
+    const hobbyScore = (matchingHobbies.length / providerHobbies.length) * 40;
+    score += hobbyScore;
+  }
+
+  // Skills matching (30% of total score)
+  const providerSkills = provider.skills || [];
+  const taskerSkills = tasker.skills || [];
+  const matchingSkills = getMatchingSkills(providerSkills, taskerSkills);
+  
+  if (providerSkills.length > 0) {
+    const skillScore = (matchingSkills.length / providerSkills.length) * 30;
+    score += skillScore;
+  }
+
+  // People preference matching (20% of total score)
+  const providerPreferences = provider.peoplePreference || [];
+  const taskerPreferences = tasker.peoplePreference || [];
+  
+  if (providerPreferences.length > 0 && taskerPreferences.length > 0) {
+    const preferenceMatches = providerPreferences.filter(pref => 
+      taskerPreferences.some(tPref => 
+        pref.toLowerCase().includes(tPref.toLowerCase()) || 
+        tPref.toLowerCase().includes(pref.toLowerCase())
+      )
+    );
+    const preferenceScore = (preferenceMatches.length / providerPreferences.length) * 20;
+    score += preferenceScore;
+  }
+
+  // Rating bonus (10% of total score)
+  const ratingBonus = (tasker.rating || 0) * 2; // Max 10 points for 5-star rating
+  score += ratingBonus;
+
+  return Math.min(Math.round(score), maxScore);
+}
+
+// Helper function to get matching hobbies
+function getMatchingHobbies(providerHobbies, taskerHobbies) {
+  return providerHobbies.filter(hobby => 
+    taskerHobbies.some(tHobby => 
+      hobby.toLowerCase() === tHobby.toLowerCase()
+    )
+  );
+}
+
+// Helper function to get matching skills
+function getMatchingSkills(requiredSkills, taskerSkills) {
+  return requiredSkills.filter(skill => 
+    taskerSkills.some(tSkill => 
+      skill.toLowerCase() === tSkill.toLowerCase()
+    )
+  );
+}
 
 export const applyToGig = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
@@ -252,13 +342,83 @@ export const cancelApplication = catchAsync(async (req, res, next) => {
 
 export const topMatchApplications = catchAsync(async (req, res, next) => {
   const user = req.user;
-  const userHobbies = user.hobbies || [];
-  // ... implement your matching logic here ...
-  // This is a placeholder for the actual matching logic
+  const { limit = 10 } = req.query;
+
+  // Find all applications where the user is the provider (gig poster)
+  const userGigs = await Gig.find({ postedBy: user._id }).select('_id');
+  const gigIds = userGigs.map(gig => gig._id);
+
+  if (gigIds.length === 0) {
+    return res.status(200).json({
+      status: "success",
+      data: {
+        applications: [],
+        message: "No gigs found to match applications against"
+      },
+    });
+  }
+
+  // Find all applications for user's gigs
+  const applications = await Application.find({
+    gig: { $in: gigIds },
+    status: "pending" // Only show pending applications
+  })
+  .populate("user", "firstName lastName email bio hobbies skills peoplePreference profileImage address rating ratingCount")
+  .populate("gig", "title description hobbies skills");
+
+  // Calculate compatibility scores for each application
+  const scoredApplications = applications.map(application => {
+    const tasker = application.user;
+    const gig = application.gig;
+    
+    // Safely format location
+    let location = "Location not specified";
+    if (tasker.address && tasker.address.city && tasker.address.state) {
+      location = `${tasker.address.city}, ${tasker.address.state}`;
+    } else if (tasker.address && tasker.address.city) {
+      location = tasker.address.city;
+    } else if (tasker.address && tasker.address.state) {
+      location = tasker.address.state;
+    }
+
+    const compatibilityScore = calculateCompatibilityScore(user, tasker);
+    const matchingHobbies = getMatchingHobbies(user.hobbies || [], tasker.hobbies || []);
+    const matchingSkills = getMatchingSkills(gig.skills || [], tasker.skills || []);
+
+    return {
+      id: application._id,
+      gigId: gig._id,
+      gigTitle: gig.title,
+      name: `${tasker.firstName} ${tasker.lastName}`,
+      location: location,
+      description: tasker.bio || "No bio provided",
+      services: tasker.skills || [],
+      hobbies: tasker.hobbies || [],
+      image: tasker.profileImage || "/default.png",
+      status: application.status,
+      rating: tasker.rating || 0,
+      ratingCount: tasker.ratingCount || 0,
+      compatibilityScore: compatibilityScore,
+      matchingHobbies: matchingHobbies,
+      matchingSkills: matchingSkills,
+      appliedAt: application.createdAt
+    };
+  });
+
+  // Sort by compatibility score (highest first) and limit results
+  const topMatches = scoredApplications
+    .sort((a, b) => b.compatibilityScore - a.compatibilityScore)
+    .slice(0, parseInt(limit));
+
   res.status(200).json({
     status: "success",
+    results: topMatches.length,
     data: {
-      applications: [], // Return matched applications here
+      applications: topMatches,
+      totalApplications: applications.length,
+      averageCompatibility: topMatches.length > 0 
+        ? Math.round(topMatches.reduce((sum, app) => sum + app.compatibilityScore, 0) / topMatches.length)
+        : 0
     },
   });
 });
