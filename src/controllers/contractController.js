@@ -54,9 +54,9 @@ export const getMyContracts = catchAsync(async (req, res, next) => {
 
   // Fetch contracts where the user is either the provider or the tasker
   const contracts = await Contract.find(query)
-    .populate("gig", "title category cost status") // Populate gig details
-    .populate("provider", "firstName lastName email") // Populate provider details
-    .populate("tasker", "firstName lastName email") // Populate tasker details
+    .populate("gig", "title category cost status location estimatedHours duration isHourly ratePerHour") // Populate gig details including location
+    .populate("provider", "firstName lastName email profileImage") // Populate provider details
+    .populate("tasker", "firstName lastName email profileImage") // Populate tasker details
     .skip(skip)
     .limit(limit);
 
@@ -64,21 +64,98 @@ export const getMyContracts = catchAsync(async (req, res, next) => {
   const totalContracts = await Contract.countDocuments(query);
 
   // Format the response
-  const formattedContracts = contracts.map((contract) => ({
-    id: contract._id,
-    gigTitle: contract.gig?.title,
-    gigId: contract.gig?._id,
-    gigCategory: contract.gig?.category,
-    gigCost: contract.gig?.cost,
-    gigStatus: contract.gig?.status,
-    provider: [contract.provider?.firstName, contract.provider?.lastName].join(
-      " "
-    ),
-    tasker: [contract.tasker?.firstName, contract.tasker?.lastName].join(" "),
-    status: contract.status,
-    createdAt: contract.createdAt,
-    updatedAt: contract.updatedAt,
-  }));
+  const formattedContracts = contracts.map((contract) => {
+    // Calculate rate display
+    let rate;
+    if (contract.isHourly) {
+      rate = `$${contract.hourlyRate}/hr`;
+    } else {
+      rate = `$${contract.agreedCost}`;
+    }
+
+    // Calculate earned amount (for now, use agreed cost - in future this could be based on actual hours/payments)
+    let earned;
+    if (contract.isHourly) {
+      // For hourly contracts, earned = hourlyRate * actualHours (or estimatedHours if no actual hours)
+      const hours = contract.actualHours || contract.estimatedHours || 0;
+      earned = `$${(contract.hourlyRate * hours).toFixed(2)}`;
+    } else {
+      earned = `$${contract.agreedCost.toFixed(2)}`;
+    }
+    
+    // Override with actual payout amount if available (after fees/taxes)
+    if (contract.payoutToTasker && contract.payoutToTasker > 0) {
+      earned = `$${(contract.payoutToTasker / 100).toFixed(2)}`;
+    }
+
+    // Format location from gig
+    let location = 'Location TBD';
+    if (contract.gig?.location) {
+      const loc = contract.gig.location;
+      if (loc.city && loc.state) {
+        location = `${loc.city}, ${loc.state}`;
+      } else if (loc.city) {
+        location = loc.city;
+      }
+    }
+
+    // Format duration
+    let duration;
+    if (contract.isHourly) {
+      duration = `${contract.estimatedHours || contract.gig?.estimatedHours || contract.gig?.duration || 0} hours`;
+    } else {
+      duration = contract.gig?.duration ? `${contract.gig.duration} hours` : 'Flexible';
+    }
+
+    // Determine if current user is provider or tasker
+    const isUserProvider = contract.provider?._id.toString() === userId.toString();
+    const isUserTasker = contract.tasker?._id.toString() === userId.toString();
+
+    // Show different information based on user role
+    let displayName, displayImage, hiredBy;
+    
+    if (isUserTasker) {
+      // Tasker sees provider information
+      displayName = [contract.provider?.firstName, contract.provider?.lastName].join(" ");
+      displayImage = contract.provider?.profileImage;
+      hiredBy = `Hired by ${displayName}`;
+    } else if (isUserProvider) {
+      // Provider sees tasker information  
+      displayName = [contract.tasker?.firstName, contract.tasker?.lastName].join(" ");
+      displayImage = contract.tasker?.profileImage;
+      hiredBy = `Working with ${displayName}`;
+    }
+
+    return {
+      id: contract._id,
+      contractId: contract._id,
+      gigTitle: contract.gig?.title,
+      gigId: contract.gig?._id,
+      gigCategory: contract.gig?.category,
+      gigCost: contract.gig?.cost,
+      gigStatus: contract.gig?.status,
+      provider: [contract.provider?.firstName, contract.provider?.lastName].join(" "),
+      tasker: [contract.tasker?.firstName, contract.tasker?.lastName].join(" "),
+      status: contract.status,
+      createdAt: contract.createdAt,
+      updatedAt: contract.updatedAt,
+      // New fields for proper display
+      location,
+      rate,
+      earned,
+      duration,
+      isHourly: contract.isHourly,
+      hourlyRate: contract.hourlyRate,
+      estimatedHours: contract.estimatedHours,
+      agreedCost: contract.agreedCost,
+      // Role-based display fields
+      displayName,
+      displayImage,
+      hiredBy,
+      isUserProvider,
+      isUserTasker,
+    };
+  });
 
   res.status(200).json({
     status: "success",
@@ -109,9 +186,11 @@ const findAndAuthorizeContract = async (
     throw new AppError("Invalid Contract ID format.", 400);
   }
 
-  const contract = await Contract.findById(contractId).populate(
-    "provider tasker"
-  );
+  const contract = await Contract.findById(contractId).populate([
+    { path: "provider", select: "firstName lastName email" },
+    { path: "tasker", select: "firstName lastName email" },
+    { path: "gig", select: "title category cost status location estimatedHours duration isHourly ratePerHour" }
+  ]);
 
   if (!contract) {
     throw new AppError("Contract not found.", 404);
@@ -317,11 +396,11 @@ export const approveCompletionAndRelease = catchAsync(
       return next(new AppError("Failed to release payout to tasker.", 500));
     }
 
-    contract.status = "completed";
+    contract.status = "pending_payment";
     await contract.save();
 
     console.log(
-      `Contract ${contract._id} marked as completed by Provider ${userId}. Payout released to tasker.`
+      `Contract ${contract._id} marked as pending payment by Provider ${userId}. Work approved, awaiting payment.`
     );
 
     // Notify tasker
@@ -347,13 +426,110 @@ export const approveCompletionAndRelease = catchAsync(
     return res.status(200).json({
       status: "success",
       message:
-        "Work approved successfully. Payout released to the Tasker's bank account.",
+        "Work approved successfully. Contract is now pending payment.",
       data: {
         contract,
       },
     });
   }
 );
+
+/**
+ * Provider pays the tasker, marking contract as completed.
+ * @route PATCH /contracts/:id/pay-tasker
+ * @access Provider only
+ */
+export const payTasker = catchAsync(async (req, res, next) => {
+  const contractId = req.params.id;
+  const userId = req.user.id;
+
+  const { contract, isProvider } = await findAndAuthorizeContract(
+    contractId,
+    userId,
+    ["provider"]
+  );
+
+  if (!isProvider) {
+    return next(
+      new AppError(
+        "Only the provider can pay the tasker for this contract.",
+        403
+      )
+    );
+  }
+
+  if (contract.status !== "pending_payment") {
+    return next(
+      new AppError(
+        `Cannot pay tasker at this stage. Contract status is '${contract.status}', requires 'pending_payment'.`,
+        400
+      )
+    );
+  }
+
+  const payment = await Payment.findOne({ contract: contractId });
+
+  if (!payment || payment.status !== "succeeded") {
+    console.warn(
+      `Payment issue for Contract ${contractId}: ${payment?.status}`
+    );
+    return next(
+      new AppError(
+        "Cannot pay tasker - payment not successfully completed or funds not transferred.",
+        400
+      )
+    );
+  }
+
+  // --- Manual payout to tasker (Stripe Express, manual schedule) ---
+  try {
+    // Check if we're in test environment
+    if (process.env.NODE_ENV === 'test') {
+      // Skip actual Stripe API call in test environment
+      logger.debug('Test environment detected, skipping Stripe payout API call');
+    } else {
+      // Make the real Stripe API call in production/development
+      await stripe.payouts.create(
+        {
+          amount: payment.amountReceivedByPayee, // in cents
+          currency: payment.currency,
+        },
+        {
+          stripeAccount: contract.tasker.stripeAccountId,
+        }
+      );
+    }
+  } catch (err) {
+    console.error("Error triggering manual payout to tasker:", err);
+    return next(new AppError("Failed to release payout to tasker.", 500));
+  }
+
+  contract.status = "completed";
+  await contract.save();
+
+  console.log(
+    `Contract ${contract._id} marked as completed by Provider ${userId}. Payout released to tasker.`
+  );
+
+  // Notify tasker of payment received
+  await sendNotification({
+    user: contract.tasker,
+    type: 'payment_received',
+    message: `Payment received for contract!`,
+    data: { contractId: contract._id, gigId: contract.gig },
+    icon: 'money.svg',
+    link: '/contracts',
+  });
+
+  return res.status(200).json({
+    status: "success",
+    message:
+      "Payment released successfully. Contract is now completed.",
+    data: {
+      contract,
+    },
+  });
+});
 
 /**
  * Provider requests revision on submitted work.

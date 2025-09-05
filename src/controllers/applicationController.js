@@ -239,16 +239,20 @@ export const applyToGig = catchAsync(async (req, res, next) => {
 
 export const offerApplication = catchAsync(async (req, res, next) => {
   const { applicationId } = req.params;
+  
+  logger.info(`offerApplication: Processing application ${applicationId}`);
 
   // Find the application by ID
   const application = await Application.findById(applicationId).populate("gig");
 
   if (!application) {
+    logger.error(`offerApplication: Application ${applicationId} not found`);
     return next(new AppError("Application not found.", 404));
   }
 
   // Check if the application is already accepted
   if (application.status === "accepted") {
+    logger.warn(`offerApplication: Application ${applicationId} already accepted`);
     return next(
       new AppError("This application has already been accepted.", 400)
     );
@@ -266,17 +270,34 @@ export const offerApplication = catchAsync(async (req, res, next) => {
 
   // Update the gig status to "assigned"
   gig.status = "assigned";
-  gig.assignedTasker = application.user; // Assign the tasker to the gig
+  gig.assignedTo = application.user; // Assign the tasker to the gig
   await gig.save();
+  logger.info(`offerApplication: Gig ${gig._id} assigned to tasker ${application.user}`);
 
   // Create a new contract
-  const contract = await Contract.create({
+  const contractData = {
     gig: gig._id,
     provider: gig.postedBy._id || gig.postedBy, // Handle both populated and unpopulated cases
     tasker: application.user, // The tasker assigned to the gig
-    agreedCost: gig.cost, // Use the gig's cost as the agreed cost
-    status: "pending_payment", // Set to pending_payment since tasker is automatically accepted
-  });
+    status: "active", // Set to active when contract is created
+    isHourly: gig.isHourly || false,
+  };
+
+  // Set contract fields based on gig type
+  if (gig.isHourly) {
+    contractData.hourlyRate = gig.ratePerHour;
+    contractData.estimatedHours = gig.estimatedHours || gig.duration || 1;
+    // For hourly contracts, agreedCost is calculated as rate * estimated hours
+    contractData.agreedCost = gig.ratePerHour * (gig.estimatedHours || gig.duration || 1);
+    logger.info(`offerApplication: Creating hourly contract - Rate: ${gig.ratePerHour}, Hours: ${contractData.estimatedHours}, Total: ${contractData.agreedCost}`);
+  } else {
+    contractData.agreedCost = gig.cost;
+    logger.info(`offerApplication: Creating fixed contract - Cost: ${gig.cost}`);
+  }
+
+  logger.debug(`offerApplication: Contract data:`, contractData);
+  const contract = await Contract.create(contractData);
+  logger.info(`offerApplication: Contract ${contract._id} created successfully`);
 
   res.status(200).json({
     status: "success",

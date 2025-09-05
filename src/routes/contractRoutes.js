@@ -8,6 +8,7 @@ import {
   getContract,
   submitWork, // Import the specific function
   approveCompletionAndRelease, // Import the specific function
+  payTasker, // Import the new pay tasker function
   requestRevision, // Import the specific function
   cancelContract,
   deleteContract, // Import the specific function
@@ -78,6 +79,20 @@ router.patch(
   ],
   validateRequest,
   approveCompletionAndRelease
+);
+
+// --- Route: Provider pays tasker ---
+// @route   PATCH /api/v1/contracts/:id/pay-tasker
+// @desc    Provider pays the tasker and marks contract as completed
+// @access  Private (only accessible to provider)
+router.patch(
+  "/:id/pay-tasker",
+  [
+    restrictTo("provider"), // Only provider can pay tasker
+    param("id").isMongoId().withMessage("Invalid Contract ID format"),
+  ],
+  validateRequest,
+  payTasker
 );
 
 router.patch(

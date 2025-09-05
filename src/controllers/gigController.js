@@ -171,12 +171,30 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
   pipeline.push({ $match: matchConditions });
   
   // Join with users collection to get provider info
+  // Note: We need to explicitly project stripeChargesEnabled since it has select: false in the model
   pipeline.push({
     $lookup: {
       from: "users",
       localField: "postedBy",
       foreignField: "_id",
-      as: "providerInfo"
+      as: "providerInfo",
+      pipeline: [
+        {
+          $project: {
+            _id: 1,
+            firstName: 1,
+            lastName: 1,
+            fullName: { $concat: ["$firstName", " ", "$lastName"] },
+            profileImage: 1,
+            rating: 1,
+            peoplePreference: 1,
+            hobbies: 1,
+            stripeAccountId: 1,
+            stripeChargesEnabled: 1,
+            stripePayoutsEnabled: 1
+          }
+        }
+      ]
     }
   });
   
@@ -210,6 +228,31 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
   
   pipeline.push({ $skip: skip });
   pipeline.push({ $limit: limit });
+  
+  // Project the final result to map providerInfo back to postedBy
+  pipeline.push({
+    $project: {
+      _id: 1,
+      title: 1,
+      description: 1,
+      category: 1,
+      subcategory: 1,
+      cost: 1,
+      ratePerHour: 1,
+      isHourly: 1,
+      estimatedHours: 1,
+      location: 1,
+      isRemote: 1,
+      deadline: 1,
+      duration: 1,
+      skills: 1,
+      status: 1,
+      attachments: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      postedBy: "$providerInfo" // Map providerInfo back to postedBy
+    }
+  });
   
   // Execute the query
   const gigs = await Gig.aggregate(pipeline);
@@ -574,6 +617,24 @@ export const matchGigsForTasker = catchAsync(async (req, res, next) => {
       localField: "postedBy",
       foreignField: "_id",
       as: "providerInfo",
+      pipeline: [
+        {
+          $project: {
+            _id: 1,
+            firstName: 1,
+            lastName: 1,
+            fullName: 1,
+            profileImage: 1,
+            rating: 1,
+            peoplePreference: 1,
+            hobbies: 1,
+            bio: 1,
+            stripeAccountId: 1,
+            stripeChargesEnabled: 1,
+            stripePayoutsEnabled: 1
+          }
+        }
+      ]
     },
   });
   pipeline.push({
@@ -682,16 +743,19 @@ export const matchGigsForTasker = catchAsync(async (req, res, next) => {
       description: 1,
       category: 1,
       cost: 1,
+      ratePerHour: 1,
+      isHourly: 1,
+      estimatedHours: 1,
       location: 1,
       isRemote: 1,
       createdAt: 1,
       status: 1,
       matchScore: 1,
-      providerInfo: {
+      postedBy: {
         _id: "$providerInfo._id",
         firstName: "$providerInfo.firstName",
         lastName: "$providerInfo.lastName",
-        fullName: "$providerInfo.fullName",
+        fullName: { $concat: ["$providerInfo.firstName", " ", "$providerInfo.lastName"] },
         profileImage: "$providerInfo.profileImage",
         rating: "$providerInfo.rating",
         peoplePreference: "$providerInfo.peoplePreference",

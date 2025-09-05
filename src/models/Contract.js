@@ -113,7 +113,7 @@ contractSchema.pre(/^find/, function (next) {
     })
     .populate({
       path: "gig",
-      select: "title status cost",
+      select: "title status cost location estimatedHours duration isHourly ratePerHour category",
     });
   next();
 });
