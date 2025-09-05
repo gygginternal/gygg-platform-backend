@@ -750,7 +750,26 @@ export const getMyGigsWithNoApplications = catchAsync(
           ratePerHour: 1,
           estimatedHours: 1,
           location: {
-            $concat: ["$location.city", ", ", "$location.state"], // Combine city and state
+            $cond: {
+              if: { $and: [
+                { $ne: ["$location.city", null] },
+                { $ne: ["$location.state", null] }
+              ]},
+              then: { $concat: ["$location.city", ", ", "$location.state"] },
+              else: {
+                $cond: {
+                  if: { $ne: ["$location.city", null] },
+                  then: "$location.city",
+                  else: {
+                    $cond: {
+                      if: { $ne: ["$location.state", null] },
+                      then: "$location.state",
+                      else: null
+                    }
+                  }
+                }
+              }
+            }
           },
           description: 1,
           createdAt: 1,
