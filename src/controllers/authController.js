@@ -641,9 +641,9 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
       userEmail: userWithToken.email,
     });
     
-    // Redirect to login with success message
+    // Redirect to choose page with success message
     const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
-    return res.redirect(302, `${frontendURL}/login?message=Email already verified. You can now log in.`);
+    return res.redirect(302, `${frontendURL}/choose?message=Email already verified. You can now log in.`);
   }
 
   // Token is valid and not expired - verify the email
@@ -653,9 +653,9 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
 
   logger.info(`Email verified successfully for user ${userWithToken._id}`);
 
-  // Redirect to frontend login page after successful verification
+  // Redirect to frontend choose page after successful verification
   const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
-  return res.redirect(302, `${frontendURL}/login?message=Email verified successfully! You can now log in.`);
+  return res.redirect(302, `${frontendURL}/choose?message=Email verified successfully! You can now log in.`);
 });
 
 /**
