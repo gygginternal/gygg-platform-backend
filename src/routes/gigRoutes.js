@@ -37,15 +37,15 @@ const gigBodyValidation = [
   body("subcategory").optional().trim().escape(),
   body("isHourly").optional().isBoolean().toBoolean(),
   body("cost")
-    .if(body("isHourly").not().equals(true))
+    .optional()
     .isNumeric()
     .toFloat({ min: 0.01 })
-    .withMessage("Cost must be a positive number for fixed gigs"),
+    .withMessage("Cost must be a positive number"),
   body("ratePerHour")
-    .if(body("isHourly").equals(true))
+    .optional()
     .isNumeric()
     .toFloat({ min: 0.01 })
-    .withMessage("Hourly rate must be a positive number for hourly gigs"),
+    .withMessage("Hourly rate must be a positive number"),
   body("estimatedHours")
     .optional({ checkFalsy: true })
     .isNumeric()

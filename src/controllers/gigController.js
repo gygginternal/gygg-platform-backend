@@ -240,6 +240,9 @@ export const getGig = catchAsync(async (req, res, next) => {
  * Create a new gig.
  */
 export const createGig = catchAsync(async (req, res, next) => {
+  // Debug: Log the entire request body to see what's being received
+  logger.info(`createGig: Full request body received:`, JSON.stringify(req.body, null, 2));
+  
   const {
     title,
     description,
@@ -259,14 +262,17 @@ export const createGig = catchAsync(async (req, res, next) => {
   logger.info(
     `createGig: User ${req.user.id} creating ${isHourly ? 'hourly' : 'fixed'} gig with title: "${title}"`
   );
+  logger.info(`createGig: isHourly=${isHourly} (type: ${typeof isHourly}), cost=${cost}, ratePerHour=${ratePerHour}`);
 
   // Validate payment type specific fields
-  if (isHourly) {
-    if (!ratePerHour || ratePerHour <= 0) {
+  if (isHourly === true || isHourly === 'true') {
+    logger.info(`createGig: Validating hourly gig - ratePerHour: ${ratePerHour}`);
+    if (!ratePerHour || parseFloat(ratePerHour) <= 0) {
       return next(new AppError('Hourly rate is required and must be greater than 0 for hourly gigs', 400));
     }
   } else {
-    if (!cost || cost <= 0) {
+    logger.info(`createGig: Validating fixed gig - cost: ${cost}`);
+    if (!cost || parseFloat(cost) <= 0) {
       return next(new AppError('Cost is required and must be greater than 0 for fixed gigs', 400));
     }
   }
