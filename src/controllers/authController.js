@@ -96,7 +96,18 @@ const sendVerificationEmail = async (user, req) => {
   logger.info(`Generated verification URL for ${user.email}: ${verificationURL}`);
 
   // Plain text version
-  const message = `Welcome to Gygg Platform!\n\nPlease verify your email by clicking this link:\n\n${verificationURL}\n\nThis link will expire in 10 minutes.\n\nIf you didn't create an account, please ignore this email.`;
+  const message = `Welcome to Gygg Platform!
+
+Thank you for signing up. To complete your registration and verify your email address, please click the link below:
+
+${verificationURL}
+
+This link will expire in 10 minutes.
+
+If you didn't create an account with us, please ignore this email.
+
+© ${new Date().getFullYear()} Gygg Platform. All rights reserved.
+This is an automated message, please do not reply to this email.`;
 
   // HTML version with better formatting
   const html = `
@@ -737,7 +748,17 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
   const apiResetURL = `${backendBaseURL}/api/v1/users/resetPassword/${resetToken}`;
 
   // Plain text version
-  const message = `Forgot your password? Reset it here: ${resetURL}\n\nIf you didn't request this password reset, please ignore this email.`;
+  const message = `We received a request to reset your password for your GYGG Platform account.
+To reset your password, please click the link below:
+
+${resetURL}
+
+This link will expire in 10 minutes.
+
+If you didn't request a password reset, you can safely ignore this email or contact support if you have concerns.
+
+© ${new Date().getFullYear()} Gygg Platform. All rights reserved.
+This is an automated message, please do not reply to this email.`;
 
   // HTML version with better formatting
   const html = `
