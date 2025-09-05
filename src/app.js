@@ -24,6 +24,7 @@ import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicationRouter from "./routes/applicationRoutes.js";
 import offerRouter from "./routes/offerRoutes.js";
+import timeTrackingRouter from "./routes/timeTrackingRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 
 // Stripe Webhook Handler
@@ -138,6 +139,7 @@ app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
 app.use("/api/v1/applications", applicationRouter);
 app.use("/api/v1/offers", offerRouter);
+app.use("/api/v1/time-tracking", timeTrackingRouter);
 app.use("/api/v1/notifications", notificationRoutes);
 
 // --- API Base Route ---

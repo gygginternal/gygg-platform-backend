@@ -19,8 +19,33 @@ const contractSchema = new mongoose.Schema(
     },
     agreedCost: {
       type: Number,
-      required: [true, "A contract must have an agreed cost."],
+      required: function() { return !this.isHourly; },
       min: [0, "Agreed cost cannot be negative."],
+    },
+
+    // Hourly contract fields
+    isHourly: {
+      type: Boolean,
+      default: false,
+    },
+    hourlyRate: {
+      type: Number,
+      required: function() { return this.isHourly; },
+      min: [0, "Hourly rate cannot be negative."],
+    },
+    estimatedHours: {
+      type: Number,
+      min: [0, "Estimated hours cannot be negative."],
+    },
+    actualHours: {
+      type: Number,
+      default: 0,
+      min: [0, "Actual hours cannot be negative."],
+    },
+    totalHourlyPayment: {
+      type: Number,
+      default: 0,
+      min: [0, "Total hourly payment cannot be negative."],
     },
 
     // --- Payment breakdown fields (all in cents) ---

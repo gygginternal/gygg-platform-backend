@@ -427,7 +427,7 @@ const matchTaskersValidation = [
     query('limit').optional().isInt({ min: 1, max: 50 }).toInt(),
     query('search').optional().isString().trim().isLength({ min: 1, max: 100 }),
 ];
-router.get('/match-taskers', restrictTo('provider'), matchTaskersValidation, validateRequest, matchTaskers);
+router.get('/match-taskers', protect, restrictTo('provider'), matchTaskersValidation, validateRequest, matchTaskers);
 
 // Provider: Get top matching taskers by hobbies and personality
 const topMatchTaskersValidation = [

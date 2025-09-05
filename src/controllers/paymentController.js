@@ -315,10 +315,26 @@ export const createPaymentIntentForContract = catchAsync(
       }
       throw error; // Re-throw other errors
     }
-    // Create payment record first to calculate correct amounts
-    const serviceAmountInCents = Math.round(contract.agreedCost * 100); // Base service amount
-    if (serviceAmountInCents <= 0)
-      return next(new AppError("Invalid contract cost.", 400));
+    // Calculate payment amount based on contract type
+    let serviceAmountInCents;
+    let paymentDescription;
+
+    if (contract.isHourly) {
+      // For hourly contracts, use actual hours worked
+      if (!contract.actualHours || contract.actualHours <= 0) {
+        return next(new AppError("No approved hours found for this hourly contract. Please ensure time entries are approved before payment.", 400));
+      }
+      serviceAmountInCents = Math.round(contract.totalHourlyPayment * 100);
+      paymentDescription = `Payment for ${contract.actualHours} hours at $${contract.hourlyRate}/hr`;
+    } else {
+      // For fixed contracts, use agreed cost
+      serviceAmountInCents = Math.round(contract.agreedCost * 100);
+      paymentDescription = `Payment for fixed-price gig`;
+    }
+
+    if (serviceAmountInCents <= 0) {
+      return next(new AppError("Invalid payment amount calculated.", 400));
+    }
 
     // --- Stripe Tax Integration ---
     // 1. Ensure provider has a Stripe customer with address info
@@ -358,6 +374,7 @@ export const createPaymentIntentForContract = catchAsync(
         payee: contract.tasker._id,
         amount: serviceAmountInCents, // Base service amount
         currency: 'cad',
+        description: paymentDescription,
         status: "requires_payment_method",
         stripeConnectedAccountId: taskerStripeAccountId,
       });

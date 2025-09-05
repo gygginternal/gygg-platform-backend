@@ -246,33 +246,60 @@ export const createGig = catchAsync(async (req, res, next) => {
     category,
     subcategory,
     cost,
+    ratePerHour,
+    isHourly,
+    estimatedHours,
     location,
     isRemote,
     deadline,
     duration,
     skills,
   } = req.body;
+  
   logger.info(
-    `createGig: User ${req.user.id} creating gig with title: "${title}"`
+    `createGig: User ${req.user.id} creating ${isHourly ? 'hourly' : 'fixed'} gig with title: "${title}"`
   );
+
+  // Validate payment type specific fields
+  if (isHourly) {
+    if (!ratePerHour || ratePerHour <= 0) {
+      return next(new AppError('Hourly rate is required and must be greater than 0 for hourly gigs', 400));
+    }
+  } else {
+    if (!cost || cost <= 0) {
+      return next(new AppError('Cost is required and must be greater than 0 for fixed gigs', 400));
+    }
+  }
 
   const newGigData = {
     title,
     description,
     category,
     subcategory,
-    cost,
     location,
     isRemote,
     deadline,
-    duration,
     skills,
     postedBy: req.user.id, // Set the poster from the authenticated user
     status: "open",
+    isHourly: Boolean(isHourly),
   };
 
+  // Set payment fields based on gig type
+  if (isHourly) {
+    newGigData.ratePerHour = parseFloat(ratePerHour);
+    if (estimatedHours) {
+      newGigData.estimatedHours = parseFloat(estimatedHours);
+    }
+    // For duration field compatibility (some parts of system might expect it)
+    newGigData.duration = estimatedHours ? parseFloat(estimatedHours) : duration;
+  } else {
+    newGigData.cost = parseFloat(cost);
+    newGigData.duration = duration;
+  }
+
   const newGig = await Gig.create(newGigData);
-  logger.info(`createGig: Gig ${newGig._id} created successfully.`);
+  logger.info(`createGig: ${isHourly ? 'Hourly' : 'Fixed'} gig ${newGig._id} created successfully. ${isHourly ? `Rate: $${ratePerHour}/hr` : `Cost: $${cost}`}`);
 
   res.status(201).json({ status: "success", data: { gig: newGig } });
 });
@@ -452,13 +479,25 @@ export const acceptGig = catchAsync(async (req, res, next) => {
     logger.info(
       `Gig ${gigId} updated to pending_payment, assigned to Tasker ${taskerId}`
     );
-    const newContract = await Contract.create({
+    // Create contract with proper hourly vs fixed handling
+    const contractData = {
       gig: gigId,
       provider: gig.postedBy.id,
       tasker: taskerId,
-      agreedCost: gig.cost,
       status: "active",
-    });
+      isHourly: gig.isHourly,
+    };
+
+    if (gig.isHourly) {
+      contractData.hourlyRate = gig.ratePerHour;
+      contractData.estimatedHours = gig.estimatedHours || gig.duration;
+      // For hourly gigs, agreedCost is estimated (rate * estimated hours)
+      contractData.agreedCost = gig.ratePerHour * (gig.estimatedHours || gig.duration || 1);
+    } else {
+      contractData.agreedCost = gig.cost;
+    }
+
+    const newContract = await Contract.create(contractData);
     logger.info(`Contract ${newContract._id} created for Gig ${gigId}`);
     const updatedGigWithPopulatedTasker = await Gig.findById(gigId);
 
@@ -701,11 +740,15 @@ export const getMyGigsWithNoApplications = catchAsync(
           title: 1,
           category: 1,
           cost: 1,
+          isHourly: 1,
+          ratePerHour: 1,
+          estimatedHours: 1,
           location: {
             $concat: ["$location.city", ", ", "$location.state"], // Combine city and state
           },
           description: 1,
           createdAt: 1,
+          applicationCount: { $size: "$applications" }, // Add application count
         },
       },
     ]);

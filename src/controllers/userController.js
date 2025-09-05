@@ -252,68 +252,97 @@ export const deleteAlbumPhoto = catchAsync(async (req, res, next) => {
 export const matchTaskers = catchAsync(async (req, res, next) => {
     const provider = req.user;
     const providerHobbies = provider.hobbies || [];
-    // Assuming peoplePreference in User model is an array of strings
-    const providerPreferenceText = Array.isArray(provider.peoplePreference) ? provider.peoplePreference.join(' ') : (provider.peoplePreference || '');
+    const providerPreferences = Array.isArray(provider.peoplePreference) 
+        ? provider.peoplePreference 
+        : (provider.peoplePreference ? [provider.peoplePreference] : []);
     const providerId = provider._id;
     
     // Get search term from query parameters
     const searchTerm = req.query.search ? req.query.search.trim() : '';
 
-    logger.debug(`matchTaskers: Provider ${providerId} searching. Search term: "${searchTerm}", Hobbies: [${providerHobbies.join(', ')}], Pref Text: "${providerPreferenceText}"`);
+    logger.debug(`matchTaskers: Provider ${providerId} searching. Search term: "${searchTerm}", Hobbies: [${providerHobbies.join(', ')}], Preferences: [${providerPreferences.join(', ')}]`);
+
+    // Build base query
+    const baseQuery = { role: 'tasker', active: true, _id: { $ne: providerId } };
+    
+    // Add text search to base query if search term provided
+    if (searchTerm) {
+        baseQuery.$text = { $search: searchTerm };
+        logger.debug(`matchTaskers: Using text search for: "${searchTerm}"`);
+    }
 
     // If no preferences and no search term, return top-rated taskers
-    if (providerHobbies.length === 0 && !providerPreferenceText.trim() && !searchTerm) {
+    if (providerHobbies.length === 0 && providerPreferences.length === 0 && !searchTerm) {
         logger.info(`matchTaskers: Provider ${providerId} has no preferences or search term. Returning top-rated.`);
-        const topTaskers = await User.find({ role: 'tasker', active: true, _id: { $ne: providerId } })
-            .sort({ rating: -1, ratingCount: -1 }).limit(10)
-            .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies skills');
-        return res.status(200).json({ status: 'success', message: 'Showing top-rated taskers.', results: topTaskers.length, data: { taskers: topTaskers }});
+        const topTaskers = await User.find(baseQuery)
+            .sort({ rating: -1, ratingCount: -1 })
+            .limit(10)
+            .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies skills address ratePerHour');
+        return res.status(200).json({ 
+            status: 'success', 
+            message: 'Showing top-rated taskers.', 
+            results: topTaskers.length, 
+            data: { taskers: topTaskers }
+        });
     }
 
-    const pipeline = [];
-    pipeline.push({ $match: { role: 'tasker', active: true, _id: { $ne: providerId } } });
+    // Find all matching taskers
+    const taskers = await User.find(baseQuery)
+        .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies skills address ratePerHour');
 
-    // Determine what to search for - prioritize explicit search term, then preferences
-    const searchText = searchTerm || providerPreferenceText.trim();
-    
-    // Add text search if we have search text
-    if (searchText) {
-        pipeline.push({ $match: { $text: { $search: searchText } } });
-        pipeline.push({ $addFields: { textScore: { $meta: 'textScore' } } }); // Use textScore field name
-        logger.debug(`matchTaskers: Using text search for: "${searchText}"`);
-    } else {
-        pipeline.push({ $addFields: { textScore: 0 } }); // Default score if no text search
-    }
-
-    // Additional filtering or scoring based on hobbies
-    // This $addFields will overwrite textScore if no preferenceText was provided, which is fine.
-    // If both exist, we'll sort by textScore first.
-    pipeline.push({
-        $addFields: {
-            hobbyMatchScore: {
-                $cond: [ { $gt: [ { $size: { $ifNull: [ { $setIntersection: ["$hobbies", providerHobbies] }, [] ] } }, 0 ] }, 1, 0 ]
-            }
-        }
+    // Calculate compatibility scores for each tasker
+    const scoredTaskers = taskers.map(tasker => {
+        const hobbyOverlap = Array.isArray(tasker.hobbies)
+            ? tasker.hobbies.filter(h => providerHobbies.includes(h)).length
+            : 0;
+        
+        const personalityOverlap = Array.isArray(tasker.peoplePreference)
+            ? tasker.peoplePreference.filter(p => providerPreferences.includes(p)).length
+            : 0;
+        
+        const compatibilityScore = hobbyOverlap + personalityOverlap;
+        
+        // Add text search score if applicable
+        const textScore = searchTerm ? (tasker._doc?.score || 0) : 0;
+        
+        return {
+            ...tasker.toObject(),
+            compatibilityScore,
+            hobbyMatches: hobbyOverlap,
+            personalityMatches: personalityOverlap,
+            textScore,
+            totalScore: compatibilityScore + (textScore * 0.1) // Weight text search lower than compatibility
+        };
     });
 
-    // Sorting: Prioritize text match, then hobby match, then rating
-    pipeline.push({ $sort: { textScore: -1, hobbyMatchScore: -1, rating: -1, ratingCount: -1 } });
+    // Sort by compatibility score first, then by rating
+    scoredTaskers.sort((a, b) => {
+        // Primary sort: total score (compatibility + text search)
+        if (b.totalScore !== a.totalScore) {
+            return b.totalScore - a.totalScore;
+        }
+        // Secondary sort: rating
+        if ((b.rating || 0) !== (a.rating || 0)) {
+            return (b.rating || 0) - (a.rating || 0);
+        }
+        // Tertiary sort: rating count
+        return (b.ratingCount || 0) - (a.ratingCount || 0);
+    });
 
+    // Apply pagination
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
     const skip = (page - 1) * limit;
-    pipeline.push({ $skip: skip }); pipeline.push({ $limit: limit });
+    const paginatedTaskers = scoredTaskers.slice(skip, skip + limit);
 
-    pipeline.push({ $project: {
-        _id: 1, firstName: 1, lastName: 1, fullName: 1, profileImage: 1,
-        rating: 1, ratingCount: 1, bio: 1, peoplePreference: 1, hobbies: 1, skills: 1, role: 1,
-        score: "$textScore", // Alias textScore to score if preferred for consistency
-        hobbyMatchScore: 1 // Include hobby match score for inspection
-    }});
-
-    const matchedTaskers = await User.aggregate(pipeline);
-    logger.info(`matchTaskers: Found ${matchedTaskers.length} taskers for provider ${providerId}.`);
-    res.status(200).json({ status: 'success', results: matchedTaskers.length, data: { taskers: matchedTaskers } });
+    logger.info(`matchTaskers: Found ${scoredTaskers.length} taskers for provider ${providerId}. Returning ${paginatedTaskers.length} after pagination.`);
+    
+    res.status(200).json({ 
+        status: 'success', 
+        results: paginatedTaskers.length, 
+        totalResults: scoredTaskers.length,
+        data: { taskers: paginatedTaskers } 
+    });
 });
 
 // --- Controller: Top match taskers for provider ---
@@ -323,6 +352,8 @@ export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
   const providerPreferences = Array.isArray(provider.peoplePreference)
     ? provider.peoplePreference
     : (provider.peoplePreference ? [provider.peoplePreference] : []);
+
+  logger.debug(`topMatchTaskersForProvider: Provider ${provider._id} searching. Hobbies: [${providerHobbies.join(', ')}], Preferences: [${providerPreferences.join(', ')}]`);
 
   // Build search query
   const searchQuery = { role: 'tasker', active: true, _id: { $ne: provider._id } };
@@ -335,9 +366,10 @@ export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
   }
 
   // Find all taskers except the current user
-  const taskers = await User.find(searchQuery);
+  const taskers = await User.find(searchQuery)
+    .select('firstName lastName fullName profileImage rating ratingCount bio peoplePreference hobbies skills address ratePerHour');
 
-  // Calculate match score for each tasker
+  // Calculate compatibility scores for each tasker
   const scoredTaskers = taskers.map(tasker => {
     const hobbyOverlap = Array.isArray(tasker.hobbies)
       ? tasker.hobbies.filter(h => providerHobbies.includes(h)).length
@@ -345,15 +377,37 @@ export const topMatchTaskersForProvider = catchAsync(async (req, res, next) => {
     const personalityOverlap = Array.isArray(tasker.peoplePreference)
       ? tasker.peoplePreference.filter(p => providerPreferences.includes(p)).length
       : 0;
-    const matchScore = hobbyOverlap + personalityOverlap;
+    
+    const compatibilityScore = hobbyOverlap + personalityOverlap;
+    
+    // Add text search score if applicable
+    const textScore = req.query.search ? (tasker._doc?.score || 0) : 0;
+    
     return {
       ...tasker.toObject(),
-      matchScore,
+      compatibilityScore,
+      hobbyMatches: hobbyOverlap,
+      personalityMatches: personalityOverlap,
+      textScore,
+      totalScore: compatibilityScore + (textScore * 0.1) // Weight text search lower than compatibility
     };
   });
 
-  // Sort by matchScore descending, then by rating
-  scoredTaskers.sort((a, b) => b.matchScore - a.matchScore || (b.rating || 0) - (a.rating || 0));
+  // Sort by compatibility score first, then by rating
+  scoredTaskers.sort((a, b) => {
+    // Primary sort: total score (compatibility + text search)
+    if (b.totalScore !== a.totalScore) {
+      return b.totalScore - a.totalScore;
+    }
+    // Secondary sort: rating
+    if ((b.rating || 0) !== (a.rating || 0)) {
+      return (b.rating || 0) - (a.rating || 0);
+    }
+    // Tertiary sort: rating count
+    return (b.ratingCount || 0) - (a.ratingCount || 0);
+  });
+
+  logger.info(`topMatchTaskersForProvider: Found ${scoredTaskers.length} taskers for provider ${provider._id}.`);
 
   res.status(200).json({
     status: 'success',

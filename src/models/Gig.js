@@ -77,6 +77,10 @@ const gigSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    estimatedHours: {
+      type: Number,
+      min: [0, "Estimated hours cannot be negative"],
+    },
     location: {
       address: String,
       city: String,
