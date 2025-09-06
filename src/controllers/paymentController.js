@@ -1032,21 +1032,64 @@ export const getBalance = catchAsync(async (req, res, next) => {
   }
 
   try {
-    // Retrieve the available balance from Stripe
-    const balance = await stripe.balance.retrieve({
-      stripeAccount: user.stripeAccountId,
-    });
+    let availableAmount = 0;
+    let pendingAmount = 0;
 
-    // Find available balance for USD (or default currency)
-    const available = balance.available.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
-    const pending = balance.pending.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      // In development mode, calculate balance from our payment records
+      // This accounts for simulated transfers and withdrawals
+      
+      // Get all payments received by this user
+      const paymentsReceived = await Payment.find({
+        payee: userId,
+        status: 'succeeded',
+        type: 'payment'
+      });
+
+      // Get all withdrawals made by this user
+      const withdrawals = await Payment.find({
+        payer: userId,
+        status: { $in: ['paid', 'succeeded'] },
+        type: 'withdrawal'
+      });
+
+      // Calculate total received
+      const totalReceived = paymentsReceived.reduce((sum, payment) => {
+        return sum + (payment.amountReceivedByPayee || 0);
+      }, 0);
+
+      // Calculate total withdrawn
+      const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
+        return sum + (withdrawal.amount || 0);
+      }, 0);
+
+      // Available balance = received - withdrawn
+      availableAmount = totalReceived - totalWithdrawn;
+
+      console.log(`[DEV MODE] Calculated balance for user ${userId}:
+        - Payments received: ${paymentsReceived.length} ($${(totalReceived / 100).toFixed(2)})
+        - Withdrawals made: ${withdrawals.length} ($${(totalWithdrawn / 100).toFixed(2)})
+        - Available balance: $${(availableAmount / 100).toFixed(2)}`);
+
+    } else {
+      // In production mode, get real balance from Stripe
+      const balance = await stripe.balance.retrieve({
+        stripeAccount: user.stripeAccountId,
+      });
+
+      const available = balance.available.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
+      const pending = balance.pending.find(b => b.currency === 'usd') || { amount: 0, currency: 'usd' };
+      
+      availableAmount = available.amount;
+      pendingAmount = pending.amount;
+    }
 
     res.status(200).json({
       status: "success",
       data: {
-        available: (available.amount / 100).toFixed(2),
-        pending: (pending.amount / 100).toFixed(2),
-        currency: available.currency.toUpperCase(),
+        available: (availableAmount / 100).toFixed(2),
+        pending: (pendingAmount / 100).toFixed(2),
+        currency: 'USD',
         stripeAccountId: user.stripeAccountId,
       },
     });
@@ -1323,7 +1366,8 @@ export const getPaymentHistory = catchAsync(async (req, res, next) => {
 
     // Format payments for response
     const formattedPayments = payments.map(payment => ({
-      id: payment._id,
+      _id: payment._id, // Include _id for invoice generation
+      id: payment._id,  // Keep id for backward compatibility
       type: payment.type,
       status: payment.status,
       amount: payment.amount,
@@ -1383,48 +1427,109 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     return next(new AppError("Stripe account not connected. Please complete onboarding first.", 400));
   }
 
-  try {
-    // Check available balance first
-    const balance = await stripe.balance.retrieve({
-      stripeAccount: user.stripeAccountId,
-    });
+  let availableAmount = 0; // Move this outside the try block
+  const requestedAmount = Math.round(amount * 100); // Convert to cents
 
-    const available = balance.available.find(b => b.currency === 'usd');
-    const availableAmount = available ? available.amount : 0;
-    const requestedAmount = Math.round(amount * 100); // Convert to cents
+  try {
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      // In development mode, calculate balance from our payment records
+      
+      // Get all payments received by this user
+      const paymentsReceived = await Payment.find({
+        payee: userId,
+        status: 'succeeded',
+        type: 'payment'
+      });
+
+      // Get all withdrawals made by this user
+      const withdrawals = await Payment.find({
+        payer: userId,
+        status: { $in: ['paid', 'succeeded'] },
+        type: 'withdrawal'
+      });
+
+      // Calculate available balance
+      const totalReceived = paymentsReceived.reduce((sum, payment) => {
+        return sum + (payment.amountReceivedByPayee || 0);
+      }, 0);
+
+      const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
+        return sum + (withdrawal.amount || 0);
+      }, 0);
+
+      availableAmount = totalReceived - totalWithdrawn;
+
+      console.log(`[DEV MODE] Withdrawal check for user ${userId}:
+        - Total received: $${(totalReceived / 100).toFixed(2)}
+        - Total withdrawn: $${(totalWithdrawn / 100).toFixed(2)}
+        - Available: $${(availableAmount / 100).toFixed(2)}
+        - Requested: $${amount}`);
+
+    } else {
+      // In production mode, get real balance from Stripe
+      const balance = await stripe.balance.retrieve({
+        stripeAccount: user.stripeAccountId,
+      });
+
+      const available = balance.available.find(b => b.currency === 'usd');
+      availableAmount = available ? available.amount : 0;
+    }
 
     if (requestedAmount > availableAmount) {
       return next(new AppError(`Insufficient balance. Available: ${(availableAmount / 100).toFixed(2)}, Requested: ${amount}`, 400));
     }
 
-    // Create payout to user's connected bank account
-    const payout = await stripe.payouts.create({
-      amount: requestedAmount,
-      currency: 'usd',
-      method: 'instant', // Use instant payout if available, otherwise standard
-    }, {
-      stripeAccount: user.stripeAccountId,
-    });
+    let payout;
+    let payoutId;
+
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      // Simulate payout in development mode
+      payoutId = `po_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      payout = {
+        id: payoutId,
+        status: 'paid',
+        arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours from now
+      };
+      
+      console.log(`[DEV MODE] Simulated withdrawal:
+        - Payout ID: ${payoutId}
+        - Amount: $${amount}
+        - Status: simulated_paid`);
+
+    } else {
+      // Create real payout in production
+      payout = await stripe.payouts.create({
+        amount: requestedAmount,
+        currency: 'usd',
+        method: 'instant',
+      }, {
+        stripeAccount: user.stripeAccountId,
+      });
+      payoutId = payout.id;
+    }
 
     // Log the withdrawal for tracking
-    logger.info(`Withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payout.id})`);
+    logger.info(`Withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payoutId})`);
 
-    // Create a withdrawal record in the database (optional)
-    const withdrawalRecord = new Payment({
+    // Create a withdrawal record in the database
+    const withdrawalData = {
       payer: userId, // User withdrawing
       payee: userId, // User receiving
       amount: requestedAmount,
       currency: 'usd',
       status: payout.status,
-      stripePayoutId: payout.id,
+      stripePayoutId: payoutId,
       description: `Withdrawal to bank account`,
       type: 'withdrawal',
-      stripeConnectedAccountId: user.stripeAccountId, // Required for schema
-      amountReceivedByPayee: requestedAmount, // Required for schema
-      amountAfterTax: requestedAmount, // Required for schema
-      applicationFeeAmount: 0, // Required for schema
-      taxAmount: 0 // Required for schema
-    });
+      stripeConnectedAccountId: user.stripeAccountId,
+      amountReceivedByPayee: requestedAmount,
+      amountAfterTax: requestedAmount,
+      applicationFeeAmount: 0,
+      taxAmount: 0
+    };
+    
+    // Explicitly don't set contract and gig for withdrawals to avoid unique constraint issues
+    const withdrawalRecord = new Payment(withdrawalData);
     await withdrawalRecord.save();
 
     res.status(200).json({
@@ -1438,6 +1543,15 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
       },
     });
   } catch (error) {
+    console.error(`[ERROR] Withdrawal processing failed for user ${userId}:`, {
+      errorMessage: error.message,
+      errorStack: error.stack,
+      errorType: error.type,
+      errorCode: error.code,
+      requestedAmount: amount,
+      availableAmount: availableAmount / 100
+    });
+    
     logger.error(`Error processing withdrawal for user ${userId}:`, error);
 
     // Handle specific Stripe errors
@@ -1454,7 +1568,7 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
       }
     }
 
-    return next(new AppError("Failed to process withdrawal request.", 500));
+    return next(new AppError(`Failed to process withdrawal request: ${error.message}`, 500));
   }
 });
 

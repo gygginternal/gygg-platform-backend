@@ -233,6 +233,7 @@ export const getContract = catchAsync(async (req, res, next) => {
       );
     }
     contractInstance = await Contract.findById(paramId);
+    paymentInstance = await Payment.findOne({ contract: paramId }); // Also get payment for contract ID
     if (!contractInstance) {
       return next(new AppError("Contract not found by ID.", 404));
     }
@@ -469,41 +470,128 @@ export const payTasker = catchAsync(async (req, res, next) => {
     );
   }
 
-  const payment = await Payment.findOne({ contract: contractId });
+  let payment = await Payment.findOne({ contract: contractId });
 
+  // Allow bypass in development/test environment for contracts without payment records
+  const allowBypass = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+  
   if (!payment || payment.status !== "succeeded") {
     console.warn(
-      `Payment issue for Contract ${contractId}: ${payment?.status}`
+      `Payment issue for Contract ${contractId}: ${payment?.status || 'No payment record'}`
     );
-    return next(
-      new AppError(
-        "Cannot pay tasker - payment not successfully completed or funds not transferred.",
-        400
-      )
-    );
+    
+    if (!allowBypass) {
+      return next(
+        new AppError(
+          "Cannot pay tasker - payment not successfully completed or funds not transferred.",
+          400
+        )
+      );
+    } else {
+      console.log(`[DEV MODE] Bypassing payment validation for contract ${contractId}`);
+      
+      // Create a payment record if none exists (for development/testing)
+      if (!payment) {
+        console.log(`[DEV MODE] Creating payment record for contract ${contractId}`);
+        
+        // Get contract details for payment calculation
+        const contractWithDetails = await Contract.findById(contractId)
+          .populate('provider', 'firstName lastName email stripeAccountId')
+          .populate('tasker', 'firstName lastName email stripeAccountId')
+          .populate('gig', 'title');
+        
+        // Calculate payment amounts (contract.agreedCost is in dollars, convert to cents)
+        const serviceAmountCents = Math.round(contractWithDetails.agreedCost * 100);
+        
+        payment = new Payment({
+          contract: contractId,
+          gig: contractWithDetails.gig._id,
+          payer: contractWithDetails.provider._id,
+          payee: contractWithDetails.tasker._id,
+          amount: serviceAmountCents,
+          currency: 'usd',
+          status: 'succeeded',
+          stripeConnectedAccountId: contractWithDetails.tasker.stripeAccountId || 'dev_account',
+          description: `Payment for: ${contractWithDetails.gig.title}`,
+          type: 'payment',
+          // Set required fields that will be calculated in pre-save hook
+          amountReceivedByPayee: serviceAmountCents, // Tasker receives full amount
+          applicationFeeAmount: 0, // Will be calculated in pre-save hook
+          taxAmount: 0, // Will be calculated in pre-save hook
+          amountAfterTax: serviceAmountCents // Will be calculated in pre-save hook
+        });
+        
+        // Save the payment (this will trigger the pre-save hook to calculate fees)
+        await payment.save();
+        
+        console.log(`[DEV MODE] Payment record created:
+          - Service Amount: $${(payment.amount / 100).toFixed(2)}
+          - Platform Fee: $${(payment.applicationFeeAmount / 100).toFixed(2)}
+          - Provider Tax: $${(payment.providerTaxAmount / 100).toFixed(2)}
+          - Total Provider Payment: $${(payment.totalProviderPayment / 100).toFixed(2)}
+          - Tasker Receives: $${(payment.amountReceivedByPayee / 100).toFixed(2)}`);
+      }
+    }
   }
 
-  // --- Manual payout to tasker (Stripe Express, manual schedule) ---
+  // --- Simulate money transfer to tasker's Stripe account ---
   try {
-    // Check if we're in test environment
-    if (process.env.NODE_ENV === 'test') {
-      // Skip actual Stripe API call in test environment
-      logger.debug('Test environment detected, skipping Stripe payout API call');
-    } else {
-      // Make the real Stripe API call in production/development
-      await stripe.payouts.create(
-        {
-          amount: payment.amountReceivedByPayee, // in cents
+    if (payment && payment.amountReceivedByPayee && contractWithDetails.tasker.stripeAccountId) {
+      console.log(`[DEV MODE] Simulating transfer of $${(payment.amountReceivedByPayee / 100).toFixed(2)} to tasker's Stripe account`);
+      
+      // In development mode, we'll simulate the transfer by creating a test balance
+      // In production, this would be a real Stripe transfer from provider payment
+      
+      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+        // For development: Create a simulated transfer record
+        const simulatedTransferId = `tr_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Update payment record with simulated transfer
+        payment.stripeTransferId = simulatedTransferId;
+        await payment.save();
+        
+        console.log(`[DEV MODE] Simulated transfer successful:
+          - Simulated Transfer ID: ${simulatedTransferId}
+          - Amount: $${(payment.amountReceivedByPayee / 100).toFixed(2)}
+          - Destination: ${contractWithDetails.tasker.stripeAccountId}
+          - Note: This is a simulation for development testing`);
+          
+        // Note: In a real implementation, you would:
+        // 1. First collect payment from provider (via Stripe Payment Intent)
+        // 2. Hold funds in platform account (with application fee deducted)
+        // 3. Then transfer to tasker's connected account
+        // 4. The tasker can then withdraw to their bank account
+        
+      } else {
+        // Production mode: Real Stripe transfer (requires actual funds)
+        const transfer = await stripe.transfers.create({
+          amount: payment.amountReceivedByPayee,
           currency: payment.currency,
-        },
-        {
-          stripeAccount: contract.tasker.stripeAccountId,
-        }
-      );
+          destination: contractWithDetails.tasker.stripeAccountId,
+          description: `Payment for: ${contractWithDetails.gig.title}`,
+          metadata: {
+            contractId: contractId,
+            paymentId: payment._id.toString()
+          }
+        });
+        
+        payment.stripeTransferId = transfer.id;
+        await payment.save();
+        
+        console.log(`[PRODUCTION] Real transfer completed: ${transfer.id}`);
+      }
+        
+    } else {
+      console.log('Skipping money transfer - missing payment record or Stripe account');
     }
   } catch (err) {
-    console.error("Error triggering manual payout to tasker:", err);
-    return next(new AppError("Failed to release payout to tasker.", 500));
+    console.error("Error processing payment transfer:", err);
+    // Don't fail the entire operation for transfer issues in development
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      console.log('[DEV MODE] Continuing despite transfer simulation error');
+    } else {
+      return next(new AppError("Failed to transfer payment to tasker.", 500));
+    }
   }
 
   contract.status = "completed";
@@ -729,5 +817,44 @@ export const getMyContractsWithPayments = catchAsync(async (req, res, next) => {
     status: "success",
     results: results.length,
     data: results,
+  });
+});
+
+/**
+ * Reset contract status for testing purposes (Development only)
+ * @route PATCH /contracts/:id/reset-for-testing
+ * @access Provider | Tasker (Development only)
+ */
+export const resetContractForTesting = catchAsync(async (req, res, next) => {
+  // Only allow in development environment
+  if (process.env.NODE_ENV !== 'development') {
+    return next(new AppError('This endpoint is only available in development mode.', 403));
+  }
+
+  const contractId = req.params.id;
+  const { newStatus } = req.body;
+  const userId = req.user.id;
+
+  // Validate new status
+  const allowedStatuses = ['active', 'submitted', 'pending_payment', 'completed', 'cancelled'];
+  if (!allowedStatuses.includes(newStatus)) {
+    return next(new AppError(`Invalid status. Allowed: ${allowedStatuses.join(', ')}`, 400));
+  }
+
+  const { contract } = await findAndAuthorizeContract(contractId, userId);
+
+  const oldStatus = contract.status;
+  contract.status = newStatus;
+  contract.updatedAt = new Date();
+  await contract.save();
+
+  console.log(`[DEV] Contract ${contractId} status reset: ${oldStatus} → ${newStatus} by user ${userId}`);
+
+  res.status(200).json({
+    status: "success",
+    message: `Contract status reset from '${oldStatus}' to '${newStatus}' for testing.`,
+    data: {
+      contract,
+    },
   });
 });

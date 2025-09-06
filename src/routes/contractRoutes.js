@@ -14,6 +14,7 @@ import {
   deleteContract, // Import the specific function
   getMyContracts, // Import the specific function
   getMyContractsWithPayments, // <-- Add this import
+  resetContractForTesting, // Import the testing function
 } from "../controllers/contractController.js"; // Create this controller
 
 const router = express.Router();
@@ -137,6 +138,22 @@ router.get(
   "/my-contracts-with-payments",
   restrictTo("provider", "tasker"),
   getMyContractsWithPayments
+);
+
+// --- Route: Reset contract status for testing (Development only) ---
+// @route   PATCH /api/v1/contracts/:id/reset-for-testing
+// @desc    Reset contract status for testing purposes
+// @access  Private (Development only)
+router.patch(
+  "/:id/reset-for-testing",
+  [
+    param("id").isMongoId().withMessage("Invalid Contract ID format"),
+    body("newStatus")
+      .isIn(['active', 'submitted', 'pending_payment', 'completed', 'cancelled'])
+      .withMessage("Invalid status. Allowed: active, submitted, pending_payment, completed, cancelled"),
+  ],
+  validateRequest,
+  resetContractForTesting
 );
 
 export default router;
