@@ -101,20 +101,24 @@ export const matchTaskers = catchAsync(async (req, res, next) => {
 export const topMatchGigs = catchAsync(async (req, res, next) => {
   const tasker = req.user;
   const taskerHobbies = tasker.hobbies || [];
+  const taskerSkills = tasker.skills || [];
   const taskerPreferences = tasker.peoplePreference || [];
   const taskerId = tasker._id;
 
   logger.debug(
     `topMatchGigs: Tasker ${taskerId} searching for top gigs. Hobbies: [${taskerHobbies.join(
       ", "
-    )}], Preferences: [${taskerPreferences.join(", ")}]`
+    )}], Skills: [${taskerSkills.join(", ")}], Preferences: [${taskerPreferences.join(", ")}]`
   );
 
   const pipeline = [];
 
-  // Match only open gigs
+  // Match only open gigs and exclude gigs posted by the current user
   pipeline.push({
-    $match: { status: "open" },
+    $match: { 
+      status: "open",
+      postedBy: { $ne: taskerId } // Exclude gigs posted by the current user
+    },
   });
 
   // Lookup the user who posted the gig
@@ -132,7 +136,7 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
     $unwind: "$poster",
   });
 
-  // Calculate matchScore based on the overlap between the poster's attributes and the tasker's attributes
+  // Calculate matchScore based on the overlap between the tasker's attributes and the gig's attributes
   pipeline.push({
     $addFields: {
       matchScore: {
@@ -140,16 +144,24 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
           {
             $size: {
               $setIntersection: [
-                { $ifNull: ["$poster.hobbies", []] }, // Default to empty array if null
-                taskerHobbies,
+                taskerHobbies, // Tasker's hobbies
+                { $ifNull: ["$poster.hobbies", []] }, // Poster's hobbies
               ],
             },
           }, // Overlap in hobbies
           {
             $size: {
               $setIntersection: [
-                { $ifNull: ["$poster.peoplePreference", []] }, // Default to empty array if null
-                taskerPreferences,
+                taskerSkills, // Tasker's skills
+                { $ifNull: ["$skills", []] }, // Gig's required skills
+              ],
+            },
+          }, // Overlap in skills
+          {
+            $size: {
+              $setIntersection: [
+                taskerPreferences, // Tasker's preferences
+                { $ifNull: ["$poster.peoplePreference", []] }, // Poster's preferences
               ],
             },
           }, // Overlap in peoplePreference
@@ -169,7 +181,7 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
   logger.info(
     `topMatchGigs: Found ${matchedGigs.length} gigs for tasker ${taskerId}.`
   );
-  logger.info('Matched gigs returned:', matchedGigs.map(g => g._id));
+  logger.debug('Matched gigs returned:', matchedGigs.map(g => ({ id: g._id, score: g.matchScore })));
 
   res.status(200).json({
     status: "success",

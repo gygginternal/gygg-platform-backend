@@ -166,6 +166,8 @@ router
  */
 router.get(
   "/top-match",
+  protect, // Add authentication middleware
+  restrictTo("tasker"), // Only taskers should be able to get recommended gigs
   topMatchGigs // Calls the controller to handle the request
 );
 
