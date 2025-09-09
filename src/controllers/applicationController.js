@@ -4,63 +4,12 @@ import Contract from "../models/Contract.js";
 import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/AppError.js";
 import app from "../app.js";
-import { Offer } from "../models/Offer.js"; // Import the Offer model
 import User from "../models/User.js"; // Import the User model
 import Notification from '../models/Notification.js';
 import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 
-export const createOffer = catchAsync(async (req, res, next) => {
-  const { applicationId } = req.params; // Extract application ID from route parameters
-
-  // Validate that the application exists
-  const application = await Application.findById(applicationId).populate("gig");
-  if (!application) {
-    return next(new AppError("Application not found.", 404));
-  }
-
-  // Ensure the logged-in user is the provider who posted the gig
-  const gig = application.gig;
-
-  if (gig.postedBy._id.toString() !== req.user.id) {
-    return next(
-      new AppError(
-        "You are not authorized to create an offer for this application.",
-        403
-      )
-    );
-  }
-
-  // Check if an offer already exists for this application
-  const existingOffer = await Offer.findOne({ application: applicationId });
-  if (existingOffer) {
-    return next(
-      new AppError(
-        "An offer has already been created for this application.",
-        400
-      )
-    );
-  }
-
-  // Create the offer
-  const offer = await Offer.create({
-    application: applicationId,
-    gig: gig._id, // Save the gig ID
-    provider: req.user.id,
-    tasker: application.user,
-    status: "pending",
-  });
-
-  res.status(201).json({
-    status: "success",
-    message: "Offer created successfully.",
-    data: {
-      offer,
-    },
-  });
-});
-
-export const listGigApplications = catchAsync(async (req, res, next) => {
+export const getApplications = catchAsync(async (req, res, next) => {
   const { gigId } = req.params;
 
   // Fetch the gig to get provider's preferences
@@ -237,22 +186,33 @@ export const applyToGig = catchAsync(async (req, res, next) => {
   });
 });
 
-export const offerApplication = catchAsync(async (req, res, next) => {
+export const acceptApplication = catchAsync(async (req, res, next) => {
   const { applicationId } = req.params;
-  
-  logger.info(`offerApplication: Processing application ${applicationId}`);
 
-  // Find the application by ID
-  const application = await Application.findById(applicationId).populate("gig");
+  // Find the application by ID and populate required fields
+  const application = await Application.findById(applicationId)
+    .populate("gig") // Populate the gig details
+    .populate("user"); // Populate the tasker details
 
+  // Check if the application exists
   if (!application) {
-    logger.error(`offerApplication: Application ${applicationId} not found`);
+    logger.error(`acceptApplication: Application ${applicationId} not found`);
     return next(new AppError("Application not found.", 404));
+  }
+
+  // Check if the logged-in user is the provider who posted the gig
+  if (application.gig.postedBy.toString() !== req.user._id.toString()) {
+    return next(
+      new AppError(
+        "You are not authorized to accept this application.",
+        403
+      )
+    );
   }
 
   // Check if the application is already accepted
   if (application.status === "accepted") {
-    logger.warn(`offerApplication: Application ${applicationId} already accepted`);
+    logger.warn(`acceptApplication: Application ${applicationId} already accepted`);
     return next(
       new AppError("This application has already been accepted.", 400)
     );
@@ -272,7 +232,7 @@ export const offerApplication = catchAsync(async (req, res, next) => {
   gig.status = "assigned";
   gig.assignedTo = application.user; // Assign the tasker to the gig
   await gig.save();
-  logger.info(`offerApplication: Gig ${gig._id} assigned to tasker ${application.user}`);
+  logger.info(`acceptApplication: Gig ${gig._id} assigned to tasker ${application.user}`);
 
   // Create a new contract
   const contractData = {
@@ -289,18 +249,19 @@ export const offerApplication = catchAsync(async (req, res, next) => {
     contractData.estimatedHours = gig.estimatedHours || gig.duration || 1;
     // For hourly contracts, agreedCost is calculated as rate * estimated hours
     contractData.agreedCost = gig.ratePerHour * (gig.estimatedHours || gig.duration || 1);
-    logger.info(`offerApplication: Creating hourly contract - Rate: ${gig.ratePerHour}, Hours: ${contractData.estimatedHours}, Total: ${contractData.agreedCost}`);
+    logger.info(`acceptApplication: Creating hourly contract - Rate: ${gig.ratePerHour}, Hours: ${contractData.estimatedHours}, Total: ${contractData.agreedCost}`);
   } else {
     contractData.agreedCost = gig.cost;
-    logger.info(`offerApplication: Creating fixed contract - Cost: ${gig.cost}`);
+    logger.info(`acceptApplication: Creating fixed contract - Cost: ${gig.cost}`);
   }
 
-  logger.debug(`offerApplication: Contract data:`, contractData);
+  logger.debug(`acceptApplication: Contract data:`, contractData);
   const contract = await Contract.create(contractData);
-  logger.info(`offerApplication: Contract ${contract._id} created successfully`);
+  logger.info(`acceptApplication: Contract ${contract._id} created successfully`);
 
   res.status(200).json({
     status: "success",
+    message: "Application accepted and contract created successfully.",
     data: {
       application,
       gig,

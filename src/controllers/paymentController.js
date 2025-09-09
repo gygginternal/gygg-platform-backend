@@ -6,7 +6,6 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import mongoose from "mongoose";
 import Notification from '../models/Notification.js';
-import { Offer } from '../models/Offer.js';
 import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 import PDFDocument from 'pdfkit';
@@ -968,7 +967,6 @@ export const deletePayment = catchAsync(async (req, res, next) => {
   // Cascade delete related records
   await Promise.all([
     Notification.deleteMany({ 'data.paymentId': paymentId }),
-    Offer.deleteMany({ payment: paymentId }),
   ]);
   await Payment.findByIdAndDelete(paymentId);
   logger.warn(`Payment ${paymentId} and related data deleted by user ${req.user.id}`);

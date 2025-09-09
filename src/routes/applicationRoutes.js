@@ -4,10 +4,9 @@ import validateRequest from "../middleware/validateRequest.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 import {
   rejectApplication,
-  offerApplication,
+  acceptApplication,
   cancelApplication,
   topMatchApplications,
-  createOffer, // Import createOffer controller
   getMyAppliedGigs,
 } from "../controllers/applicationController.js";
 
@@ -27,7 +26,7 @@ router.patch(
       .withMessage("Invalid Application ID format"), // Validate application ID
   ],
   validateRequest,
-  offerApplication // Calls the controller to handle acceptance
+  acceptApplication // Calls the controller to handle acceptance
 );
 
 // Route to mark an application as rejected
@@ -40,19 +39,6 @@ router.patch(
   ],
   validateRequest,
   rejectApplication // Calls the controller to handle rejection
-);
-
-// Route to create an offer for an application
-router.post(
-  "/:applicationId/offer",
-  [
-    restrictTo("provider"), // Only providers can create an offer
-    param("applicationId")
-      .isMongoId()
-      .withMessage("Invalid Application ID format"), // Validate application ID
-  ],
-  validateRequest,
-  createOffer // Calls the controller to handle offer creation
 );
 
 // Route to cancel an application

@@ -7,7 +7,6 @@ import AppError from "../utils/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import logger from "../utils/logger.js";
 import Application from "../models/Application.js";
-import { Offer } from "../models/Offer.js";
 import Notification from '../models/Notification.js';
 import Review from '../models/Review.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
@@ -712,9 +711,7 @@ export const cancelContract = catchAsync(async (req, res, next) => {
     // Optionally: return next(new AppError('Cannot cancel directly, payment exists. Use refund process.', 400));
   }
 
-  // Delete all related offers for the gig associated with the contract
-  const gigId = contract.gig;
-  await Offer.deleteMany({ gig: gigId });
+  // No more offers to delete as we're simplifying the flow
 
   contract.status = "cancelled";
   if (reason) contract.cancellationReason = reason.trim();
@@ -722,11 +719,10 @@ export const cancelContract = catchAsync(async (req, res, next) => {
   await contract.save();
 
   console.log(`Contract ${contract._id} cancelled by User ${userId}`);
-  console.log(`All related offers for gig ${gigId} have been deleted.`);
 
   res.status(200).json({
     status: "success",
-    message: "Contract cancelled successfully. All related offers deleted.",
+    message: "Contract cancelled successfully.",
     data: {
       contract,
     },
@@ -774,7 +770,6 @@ export const deleteContract = catchAsync(async (req, res, next) => {
     Payment.deleteMany({ contract: contractId }),
     Review.deleteMany({ contract: contractId }),
     Notification.deleteMany({ 'data.contractId': contractId }),
-    Offer.deleteMany({ application: contractId }),
   ]);
   await Contract.findByIdAndDelete(contractId);
   logger.warn(`Contract ${contractId} and related data deleted by user ${req.user.id}`);

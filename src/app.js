@@ -23,7 +23,7 @@ import paymentRouter from "./routes/paymentRoutes.js";
 import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicationRouter from "./routes/applicationRoutes.js";
-import offerRouter from "./routes/offerRoutes.js";
+
 import timeTrackingRouter from "./routes/timeTrackingRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 
@@ -138,7 +138,6 @@ app.use("/api/v1/payments", paymentRouter);
 app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
 app.use("/api/v1/applications", applicationRouter);
-app.use("/api/v1/offers", offerRouter);
 app.use("/api/v1/time-tracking", timeTrackingRouter);
 app.use("/api/v1/notifications", notificationRoutes);
 
@@ -157,7 +156,6 @@ app.get("/api/v1", (req, res) => {
       reviews: "/api/v1/reviews",
       contracts: "/api/v1/contracts",
       applications: "/api/v1/applications",
-      offers: "/api/v1/offers",
       notifications: "/api/v1/notifications",
     },
   });

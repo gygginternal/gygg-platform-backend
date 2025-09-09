@@ -10,7 +10,6 @@ import Notification from '../models/Notification.js';
 import Payment from '../models/Payment.js';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import Post from '../models/Post.js';
-import { Offer } from '../models/Offer.js';
 import Review from '../models/Review.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 
@@ -449,7 +448,6 @@ export const deleteGig = catchAsync(async (req, res, next) => {
   await Promise.all([
     Contract.deleteMany({ gig: gigId }),
     Payment.deleteMany({ gig: gigId }),
-    Offer.deleteMany({ gig: gigId }),
     Application.deleteMany({ gig: gigId }),
     Review.deleteMany({ gig: gigId }),
     Notification.deleteMany({ 'data.gigId': gigId }),
@@ -504,91 +502,6 @@ export const applyToGig = catchAsync(async (req, res, next) => {
 /**
  * Accept a gig and create a contract.
  */
-export const acceptGig = catchAsync(async (req, res, next) => {
-  // ... (Your existing acceptGig logic - without transactions, as per earlier fix) ...
-  // Ensure logger calls are used here too.
-  const gigId = req.params.id;
-  const taskerId = req.user.id;
-
-  const gig = await Gig.findById(gigId).populate("postedBy", "id");
-  if (!gig) {
-    /* ... error ... */
-  }
-  if (gig.status !== "open") {
-    /* ... error ... */
-  }
-  if (gig.postedBy.id === taskerId) {
-    /* ... error ... */
-  }
-
-  try {
-    gig.assignedTo = taskerId;
-    gig.status = "pending_payment";
-    await gig.save();
-    logger.info(
-      `Gig ${gigId} updated to pending_payment, assigned to Tasker ${taskerId}`
-    );
-    // Create contract with proper hourly vs fixed handling
-    const contractData = {
-      gig: gigId,
-      provider: gig.postedBy.id,
-      tasker: taskerId,
-      status: "active",
-      isHourly: gig.isHourly,
-    };
-
-    if (gig.isHourly) {
-      contractData.hourlyRate = gig.ratePerHour;
-      contractData.estimatedHours = gig.estimatedHours || gig.duration;
-      // For hourly gigs, agreedCost is estimated (rate * estimated hours)
-      contractData.agreedCost = gig.ratePerHour * (gig.estimatedHours || gig.duration || 1);
-    } else {
-      contractData.agreedCost = gig.cost;
-    }
-
-    const newContract = await Contract.create(contractData);
-    logger.info(`Contract ${newContract._id} created for Gig ${gigId}`);
-    const updatedGigWithPopulatedTasker = await Gig.findById(gigId);
-
-    // Notify applicant (tasker)
-    await sendNotification({
-      user: taskerId,
-      type: 'gig_accepted',
-      message: `Your application for ${gig.title} was accepted!`,
-      data: { gigId: gig._id, contractId: newContract._id },
-    });
-
-    res.status(200).json({
-      status: "success",
-      message: "Gig accepted. Contract created, awaiting payment.",
-      data: {
-        contractId: newContract._id,
-        gig: updatedGigWithPopulatedTasker,
-      },
-    });
-  } catch (error) {
-    logger.error("--- ACCEPT GIG FAILED (NO TRANSACTION) ---", {
-      /* ... error details ... */
-    });
-    // Revert logic
-    const originalGig = await Gig.findById(gigId);
-    if (
-      originalGig &&
-      originalGig.assignedTo &&
-      originalGig.assignedTo.equals(taskerId)
-    ) {
-      originalGig.assignedTo = null;
-      originalGig.status = "open";
-      try {
-        await originalGig.save();
-        logger.info(`Gig ${gigId} status successfully reverted.`);
-      } catch (revertError) {
-        logger.error(`Failed to revert Gig ${gigId} status.`, { revertError });
-      }
-    }
-    return next(new AppError("Failed to accept gig. Please try again.", 500));
-  }
-});
 
 /**
  * Match gigs for a tasker based on hobby and people preferences.

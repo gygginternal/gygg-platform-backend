@@ -1,25 +1,20 @@
 import express from "express";
 import { body, param, query } from "express-validator";
 import validateRequest from "../middleware/validateRequest.js";
+import { protect, restrictTo } from "../controllers/authController.js";
 import {
-  getAllGigs, // Retrieve all gigs
-  getGig, // Retrieve a specific gig by ID
-  createGig, // Create a new gig
-  updateGig, // Update a gig by ID
-  deleteGig, // Delete a gig by ID
-  acceptGig, // Tasker accepts a gig
+  createGig,
+  getAllGigs,
+  getGig,
+  updateGig,
+  deleteGig,
+  getMyGigsWithNoApplications,
+  applyToGig,
   matchGigsForTasker,
   getMyApplicationForGig,
-  getMyGigsWithNoApplications, // Match gigs to a tasker based on their hobbies and personality traits
-  applyToGig,
 } from "../controllers/gigController.js";
-
-import { protect, restrictTo } from "../controllers/authController.js"; // Auth middlewares to secure and authorize access
-import {
-  listGigApplications,
-} from "../controllers/applicationController.js";
 import { topMatchGigs } from "../controllers/taskersController.js";
-import { getOfferByApplication } from "../controllers/offerController.js"; // Import the controller
+import { getApplications } from "../controllers/applicationController.js";
 
 const router = express.Router();
 
@@ -117,16 +112,6 @@ router.use(protect);
  * Allow users to view and manage gigs.
  */
 
-// Route to get the offer of a gig
-router.get(
-  "/:gigId/offer",
-  [
-    param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
-  ],
-  validateRequest,
-  getOfferByApplication // Calls the controller to retrieve the offer
-);
-
 // Get all gigs (any logged-in user) OR create a gig (only provider)
 router.get(
   "/awaiting-posted-gig",
@@ -203,20 +188,6 @@ router
     deleteGig
   );
 
-/**
- * ===============================
- *      ACCEPT GIG (TASKER ONLY)
- * ===============================
- * A tasker can accept a gig by its ID.
- */
-router.patch(
-  "/:id/accept",
-  restrictTo("tasker"),
-  param("id").isMongoId().withMessage("Invalid Gig ID format"),
-  validateRequest,
-  acceptGig
-);
-
 router.post(
   "/apply",
   [
@@ -233,7 +204,7 @@ router.get(
     param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
   ],
   validateRequest,
-  listGigApplications // Calls the controller to list applications
+  getApplications // Calls the controller to list applications
 );
 
 // Add POST route for applying to a gig
