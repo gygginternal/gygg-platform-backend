@@ -61,7 +61,7 @@ router.patch(
 router.get(
   "/top-match",
   protect,
-  restrictTo("provider", "tasker"),
+  restrictTo("provider"),
   topMatchApplications
 );
 
