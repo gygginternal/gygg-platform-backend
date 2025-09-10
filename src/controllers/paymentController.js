@@ -989,6 +989,14 @@ export const getInvoicePdf = catchAsync(async (req, res, next) => {
     return res.status(403).json({ status: 'fail', message: 'You do not have permission to view this invoice.' });
   }
 
+  // Determine user role in this payment (provider or tasker)
+  let userRole = 'admin'; // Default for admin users
+  if (req.user.id === payment.payer._id.toString()) {
+    userRole = 'provider';
+  } else if (req.user.id === payment.payee._id.toString()) {
+    userRole = 'tasker';
+  }
+
   try {
     // Only set headers and stream PDF if all checks pass
     res.setHeader('Content-Type', 'application/pdf');
@@ -1012,7 +1020,7 @@ export const getInvoicePdf = catchAsync(async (req, res, next) => {
       taskerTax: ((payment.taskerTaxAmount || 0) / 100).toFixed(2),
       totalProviderPayment: ((payment.totalProviderPayment || payment.amount) / 100).toFixed(2),
       payout: ((payment.amountReceivedByPayee || 0) / 100).toFixed(2),
-    }, res, req.user.role);
+    }, res, userRole);
   } catch (err) {
     logger.error('Failed to generate PDF invoice:', err);
     return res.status(500).json({ status: 'fail', message: 'Failed to generate PDF invoice.' });

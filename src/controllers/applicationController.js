@@ -201,7 +201,12 @@ export const acceptApplication = catchAsync(async (req, res, next) => {
   }
 
   // Check if the logged-in user is the provider who posted the gig
-  if (application.gig.postedBy.toString() !== req.user._id.toString()) {
+  // Handle both populated and unpopulated cases for gig.postedBy
+  const gigProviderId = application.gig.postedBy._id ? 
+    application.gig.postedBy._id.toString() : 
+    application.gig.postedBy.toString();
+    
+  if (gigProviderId !== req.user._id.toString()) {
     return next(
       new AppError(
         "You are not authorized to accept this application.",

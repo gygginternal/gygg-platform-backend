@@ -110,19 +110,19 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
       doc.fontSize(11)
          .fillColor('#666')
          .text(`Service Amount:`, 50, yPosition)
-         .text(`$${invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' })
-         .text(`Platform Fee (10%):`, 50, yPosition + 15)
-         .text(`$${invoiceData.platformFee} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 15, { align: 'right' })
+         .text(`${invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' })
+         .text(`Platform Fee (10% + $5.00):`, 50, yPosition + 15)
+         .text(`${invoiceData.platformFee} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 15, { align: 'right' })
          .text(`Provider Tax:`, 50, yPosition + 30)
-         .text(`$${invoiceData.providerTax || invoiceData.tax} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 30, { align: 'right' });
+         .text(`${invoiceData.providerTax || invoiceData.tax} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 30, { align: 'right' });
     } else {
-      // Tasker invoice shows what they receive
+      // Tasker invoice shows what they receive (full amount, no deductions in current model)
       doc.fontSize(11)
          .fillColor('#666')
          .text(`Service Amount:`, 50, yPosition)
-         .text(`$${invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' })
+         .text(`${invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' })
          .text(`Tasker Tax:`, 50, yPosition + 15)
-         .text(`-$${invoiceData.taskerTax || '0.00'} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 15, { align: 'right' });
+         .text(`${invoiceData.taskerTax || '0.00'} ${invoiceData.currency.toUpperCase()}`, 400, yPosition + 15, { align: 'right' });
     }
     
     // Add line for total
@@ -140,13 +140,21 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
          .fillColor('#2563eb')
          .text('TOTAL AMOUNT PAID:', 50, yPosition, { continued: true })
          .fillColor('#e53935')
-         .text(`$${invoiceData.totalProviderPayment || invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' });
+         .text(`${invoiceData.totalProviderPayment || invoiceData.amount} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' });
     } else {
       doc.fontSize(12)
          .fillColor('#2563eb')
          .text('NET AMOUNT RECEIVED:', 50, yPosition, { continued: true })
          .fillColor('#059669')
-         .text(`$${invoiceData.payout} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' });
+         .text(`${invoiceData.payout} ${invoiceData.currency.toUpperCase()}`, 400, yPosition, { align: 'right' });
+    }
+    
+    // Add platform fee explanation for tasker
+    if (userRole === 'tasker') {
+      yPosition += 30;
+      doc.fontSize(9)
+         .fillColor('#666')
+         .text('* Platform fee is paid by the provider. You receive the full service amount.', 50, yPosition);
     }
     
     // Footer
