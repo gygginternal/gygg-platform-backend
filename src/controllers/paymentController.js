@@ -10,7 +10,7 @@ import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
-import { generateInvoicePdf } from '../utils/invoicePdf_improved.js';
+import { generateInvoicePdf } from '../utils/invoicePdf_with_logo.js';
 
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });
@@ -285,6 +285,11 @@ export const createPaymentIntentForContract = catchAsync(
         new AppError("Not authorized to pay for this contract.", 403)
       );
 
+    // Ensure that the provider has connected their Stripe account
+    const provider = await User.findById(providerId);
+    if (!provider.stripeAccountId)
+      return next(new AppError("Provider must connect their Stripe account before making payments.", 400));
+
     // Ensure that the contract is in a valid status for payment
     if (!["active", "submitted", "failed"].includes(contract.status)) {
       return next(
@@ -337,8 +342,6 @@ export const createPaymentIntentForContract = catchAsync(
 
     // --- Stripe Tax Integration ---
     // 1. Ensure provider has a Stripe customer with address info
-    let provider = await User.findById(providerId);
-    if (!provider) return next(new AppError("Provider not found.", 404));
     let stripeCustomerId = provider.stripeCustomerId;
     if (!stripeCustomerId) {
       // Create a Stripe customer for the provider if not exists
@@ -388,16 +391,16 @@ export const createPaymentIntentForContract = catchAsync(
     // Get the total amount provider needs to pay (after pre-save hook calculations)
     const totalProviderPaymentAmount = payment.totalProviderPayment || payment.amount;
 
-    // 5. Create PaymentIntent with minimal required parameters
+    // 5. Create PaymentIntent with Stripe Connect parameters
     const paymentIntentParams = {
       amount: totalProviderPaymentAmount,
       currency: payment.currency,
       // capture_method: "manual", // Disabled for testing - using automatic capture
       customer: stripeCustomerId,
       payment_method_types: ['card'], // Explicitly specify payment methods instead of automatic
-      // Stripe Connect parameters - disabled until Connect is properly configured
-      // application_fee_amount: payment.applicationFeeAmount,
-      // transfer_data: { destination: taskerStripeAccountId },
+      // Stripe Connect parameters - properly configured for platform fees
+      application_fee_amount: payment.applicationFeeAmount + payment.providerTaxAmount,
+      transfer_data: { destination: taskerStripeAccountId },
       // automatic_payment_methods: { enabled: true }, // Disabled - not supported in current API version
       automatic_tax: { enabled: true }, // Enable Stripe automatic tax calculation
       metadata: {
@@ -716,13 +719,10 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
     payment.amountReceivedByPayee = amountReceivedByPayee;
     await payment.save();
 
-    // Update contract status
-    const contract = await Contract.findById(payment.contract);
-    if (contract) {
-      contract.status = "completed";
-      await contract.save();
-    }
-
+    // DO NOT automatically update contract status
+    // Contract status will be updated manually through the contract controller
+    // when the provider explicitly approves and pays the tasker
+    
     console.log(`✅ Payment succeeded for PaymentIntent: ${paymentIntent.id}`);
   } catch (error) {
     console.error(`❌ Error handling payment_intent.succeeded: ${error.message}`);

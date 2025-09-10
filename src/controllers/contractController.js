@@ -277,7 +277,7 @@ export const getContract = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Tasker submits work for an active contract.
+ * Tasker submits completed work for provider review.
  * @route PATCH /contracts/:id/submit
  * @access Tasker only
  */
@@ -309,6 +309,28 @@ export const submitWork = catchAsync(async (req, res, next) => {
     );
   }
 
+  // Check that both provider and tasker have connected their Stripe accounts
+  const provider = await User.findById(contract.provider._id || contract.provider);
+  const tasker = await User.findById(contract.tasker._id || contract.tasker);
+  
+  if (!provider.stripeAccountId) {
+    return next(
+      new AppError(
+        "Provider must connect their Stripe account before work can be submitted.",
+        400
+      )
+    );
+  }
+  
+  if (!tasker.stripeAccountId) {
+    return next(
+      new AppError(
+        "Tasker must connect their Stripe account before submitting work.",
+        400
+      )
+    );
+  }
+
   contract.status = "submitted";
   await contract.save();
 
@@ -326,7 +348,7 @@ export const submitWork = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Provider approves submitted work, marking contract as completed.
+ * Provider approves submitted work.
  * @route PATCH /contracts/:id/approve
  * @access Provider only
  */
@@ -359,6 +381,28 @@ export const approveCompletionAndRelease = catchAsync(
       );
     }
 
+    // Check that both provider and tasker have connected their Stripe accounts
+    const provider = await User.findById(contract.provider._id || contract.provider);
+    const tasker = await User.findById(contract.tasker._id || contract.tasker);
+    
+    if (!provider.stripeAccountId) {
+      return next(
+        new AppError(
+          "Provider must connect their Stripe account before approving work.",
+          400
+        )
+      );
+    }
+    
+    if (!tasker.stripeAccountId) {
+      return next(
+        new AppError(
+          "Tasker must connect their Stripe account before work can be approved.",
+          400
+        )
+      );
+    }
+
     const payment = await Payment.findOne({ contract: contractId });
 
     if (!payment || payment.status !== "succeeded") {
@@ -373,31 +417,8 @@ export const approveCompletionAndRelease = catchAsync(
       );
     }
 
-    // --- Manual payout to tasker (Stripe Express, manual schedule) ---
-    // Funds are in the tasker's Stripe balance, but not yet in their bank account.
-    // This triggers the payout to their bank when work is approved.
-    try {
-      // Check if we're in test environment
-      if (process.env.NODE_ENV === 'test') {
-        // Skip actual Stripe API call in test environment
-        logger.debug('Test environment detected, skipping Stripe payout API call');
-      } else {
-        // Make the real Stripe API call in production/development
-        await stripe.payouts.create(
-          {
-            amount: payment.amountReceivedByPayee, // in cents
-            currency: payment.currency,
-          },
-          {
-            stripeAccount: contract.tasker.stripeAccountId,
-          }
-        );
-      }
-    } catch (err) {
-      console.error("Error triggering manual payout to tasker:", err);
-      return next(new AppError("Failed to release payout to tasker.", 500));
-    }
-
+    // Update contract status to pending_payment
+    // This indicates that the work has been approved and is ready for payment
     contract.status = "pending_payment";
     await contract.save();
 
@@ -405,23 +426,13 @@ export const approveCompletionAndRelease = catchAsync(
       `Contract ${contract._id} marked as pending payment by Provider ${userId}. Work approved, awaiting payment.`
     );
 
-    // Notify tasker
+    // Notify tasker that work has been approved and payment is pending
     await sendNotification({
       user: contract.tasker,
-      type: 'contract_accepted',
-      message: `Your contract has been accepted!`,
+      type: 'contract_approved',
+      message: `Your work has been approved! Payment is pending.`,
       data: { contractId: contract._id, gigId: contract.gig },
       icon: 'contract.svg',
-      link: '/contracts',
-    });
-
-    // Notify tasker of payment received
-    await sendNotification({
-      user: contract.tasker,
-      type: 'payment_received',
-      message: `Payment received for contract!`,
-      data: { contractId: contract._id, gigId: contract.gig },
-      icon: 'money.svg',
       link: '/contracts',
     });
 
@@ -464,6 +475,28 @@ export const payTasker = catchAsync(async (req, res, next) => {
     return next(
       new AppError(
         `Cannot pay tasker at this stage. Contract status is '${contract.status}', requires 'pending_payment'.`,
+        400
+      )
+    );
+  }
+
+  // Check that both provider and tasker have connected their Stripe accounts
+  const provider = await User.findById(contract.provider._id || contract.provider);
+  const tasker = await User.findById(contract.tasker._id || contract.tasker);
+  
+  if (!provider.stripeAccountId) {
+    return next(
+      new AppError(
+        "Provider must connect their Stripe account before paying tasker.",
+        400
+      )
+    );
+  }
+  
+  if (!tasker.stripeAccountId) {
+    return next(
+      new AppError(
+        "Tasker must connect their Stripe account before payment can be made.",
         400
       )
     );
@@ -524,73 +557,54 @@ export const payTasker = catchAsync(async (req, res, next) => {
         await payment.save();
         
         console.log(`[DEV MODE] Payment record created:
-          - Service Amount: $${(payment.amount / 100).toFixed(2)}
-          - Platform Fee: $${(payment.applicationFeeAmount / 100).toFixed(2)}
-          - Provider Tax: $${(payment.providerTaxAmount / 100).toFixed(2)}
-          - Total Provider Payment: $${(payment.totalProviderPayment / 100).toFixed(2)}
-          - Tasker Receives: $${(payment.amountReceivedByPayee / 100).toFixed(2)}`);
+          - Service Amount: ${(payment.amount / 100).toFixed(2)}
+          - Platform Fee: ${(payment.applicationFeeAmount / 100).toFixed(2)}
+          - Provider Tax: ${(payment.providerTaxAmount / 100).toFixed(2)}
+          - Total Provider Payment: ${(payment.totalProviderPayment / 100).toFixed(2)}
+          - Tasker Receives: ${(payment.amountReceivedByPayee / 100).toFixed(2)}`);
       }
     }
   }
 
-  // --- Simulate money transfer to tasker's Stripe account ---
+  // --- Verify payment was processed correctly through Stripe Connect ---
   try {
-    if (payment && payment.amountReceivedByPayee && contractWithDetails.tasker.stripeAccountId) {
-      console.log(`[DEV MODE] Simulating transfer of $${(payment.amountReceivedByPayee / 100).toFixed(2)} to tasker's Stripe account`);
+    if (payment && payment.stripePaymentIntentId) {
+      console.log(`Verifying payment processing for PaymentIntent: ${payment.stripePaymentIntentId}`);
       
-      // In development mode, we'll simulate the transfer by creating a test balance
-      // In production, this would be a real Stripe transfer from provider payment
-      
+      // In development mode, we just log the verification
       if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-        // For development: Create a simulated transfer record
-        const simulatedTransferId = `tr_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Update payment record with simulated transfer
-        payment.stripeTransferId = simulatedTransferId;
-        await payment.save();
-        
-        console.log(`[DEV MODE] Simulated transfer successful:
-          - Simulated Transfer ID: ${simulatedTransferId}
-          - Amount: $${(payment.amountReceivedByPayee / 100).toFixed(2)}
-          - Destination: ${contractWithDetails.tasker.stripeAccountId}
-          - Note: This is a simulation for development testing`);
+        console.log(`[DEV MODE] Payment verification successful:
+          - PaymentIntent ID: ${payment.stripePaymentIntentId}
+          - Amount: ${(payment.amount / 100).toFixed(2)}
+          - Platform Fee: ${(payment.applicationFeeAmount / 100).toFixed(2)}
+          - Provider Tax: ${(payment.providerTaxAmount / 100).toFixed(2)}
+          - Tasker Receives: ${(payment.amountReceivedByPayee / 100).toFixed(2)}`);
           
-        // Note: In a real implementation, you would:
-        // 1. First collect payment from provider (via Stripe Payment Intent)
-        // 2. Hold funds in platform account (with application fee deducted)
-        // 3. Then transfer to tasker's connected account
-        // 4. The tasker can then withdraw to their bank account
-        
+        // In development, we don't need to do actual Stripe verification
+        // The Stripe Connect integration should have already handled:
+        // 1. Collecting full amount from provider (service + fee + tax)
+        // 2. Holding platform fee for the platform
+        // 3. Transferring service amount to tasker
       } else {
-        // Production mode: Real Stripe transfer (requires actual funds)
-        const transfer = await stripe.transfers.create({
-          amount: payment.amountReceivedByPayee,
-          currency: payment.currency,
-          destination: contractWithDetails.tasker.stripeAccountId,
-          description: `Payment for: ${contractWithDetails.gig.title}`,
-          metadata: {
-            contractId: contractId,
-            paymentId: payment._id.toString()
-          }
-        });
+        // Production mode: Verify the PaymentIntent was processed correctly
+        const paymentIntent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
         
-        payment.stripeTransferId = transfer.id;
-        await payment.save();
+        if (paymentIntent.status !== 'succeeded') {
+          return next(new AppError(`PaymentIntent not successful. Status: ${paymentIntent.status}`, 500));
+        }
         
-        console.log(`[PRODUCTION] Real transfer completed: ${transfer.id}`);
+        console.log(`[PRODUCTION] Payment verification successful:
+          - PaymentIntent ID: ${paymentIntent.id}
+          - Status: ${paymentIntent.status}
+          - Amount Received: ${(paymentIntent.amount_received / 100).toFixed(2)}`);
       }
-        
+      
     } else {
-      console.log('Skipping money transfer - missing payment record or Stripe account');
+      console.log('Skipping payment verification - missing PaymentIntent');
     }
   } catch (err) {
-    console.error("Error processing payment transfer:", err);
-    // Don't fail the entire operation for transfer issues in development
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-      console.log('[DEV MODE] Continuing despite transfer simulation error');
-    } else {
-      return next(new AppError("Failed to transfer payment to tasker.", 500));
-    }
+    console.error("Error verifying payment processing:", err);
+    return next(new AppError("Failed to verify payment processing.", 500));
   }
 
   contract.status = "completed";
