@@ -18,7 +18,7 @@ router.use(protect); // Protect all routes below this middleware (user must be l
  * These routes handle retrieving all reviews and creating new reviews.
  */
 
-// Route to get all reviews (with optional filters like gigId, taskerId, providerId, etc.)
+// Route to get all reviews (with optional filters like gigId, taskerId, providerId, contract, etc.)
 // Anyone logged in can GET reviews.
 router
     .route('/')
@@ -26,6 +26,7 @@ router
         query('gigId').optional().isMongoId().withMessage('Invalid Gig ID format'),
         query('taskerId').optional().isMongoId().withMessage('Invalid Tasker ID format'),
         query('providerId').optional().isMongoId().withMessage('Invalid Provider ID format'),
+        query('contract').optional().isMongoId().withMessage('Invalid Contract ID format'),
         query('page').optional().isInt({ min: 1 }).toInt(),
         query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
     ], validateRequest, getAllReviews) // Calls the controller to handle fetching reviews

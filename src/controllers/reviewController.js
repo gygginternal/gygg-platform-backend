@@ -61,7 +61,7 @@ export const createReview = catchAsync(async (req, res, next) => {
 });
 
 /**
- * @desc Get all reviews (filterable by gig, tasker, or provider)
+ * @desc Get all reviews (filterable by gig, tasker, provider, or contract)
  * @route GET /api/v1/reviews
  * @access Public
  */
@@ -70,6 +70,7 @@ export const getAllReviews = catchAsync(async (req, res, next) => {
     if (req.query.gigId) filter.gig = req.query.gigId;
     if (req.query.taskerId) filter.reviewee = req.query.taskerId;
     if (req.query.providerId) filter.reviewer = req.query.providerId;
+    if (req.query.contract) filter.contract = req.query.contract;
 
     const reviews = await Review.find(filter)
         .populate('reviewer', 'firstName lastName profileImage')
