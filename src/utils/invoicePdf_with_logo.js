@@ -21,6 +21,14 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
   try {
     const doc = new PDFDocument({ margin: 50 });
     
+    // Register Inter fonts
+    const fontPath = path.resolve('src/utils/assets/fonts/');
+    doc.registerFont('Inter', path.join(fontPath, 'Inter-Regular.ttf'));
+    doc.registerFont('Inter-Bold', path.join(fontPath, 'Inter-Bold.ttf'));
+    
+    // Set default font
+    doc.font('Inter');
+    
     // Set headers
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=invoice-${invoiceData.paymentId}.pdf`);
@@ -39,11 +47,13 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
         
         // Header with platform name next to logo
         doc.fontSize(24)
-           .fillColor('#2563eb')
+           .font('Inter-Bold')
+           .fillColor('#D99633')
            .text('GYGG PLATFORM', 110, 45);
         
         doc.fontSize(16)
-           .fillColor('#666')
+           .font('Inter')
+           .fillColor('black')
            .text('Professional Services Invoice', 110, 75);
         
         yPosition = 120;
@@ -51,11 +61,13 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
         console.error('Error loading logo:', logoError);
         // Fallback to text-only header
         doc.fontSize(24)
-           .fillColor('#2563eb')
+           .font('Inter-Bold')
+           .fillColor('#D99633')
            .text('GYGG PLATFORM', 50, 50, { align: 'center' });
         
         doc.fontSize(16)
-           .fillColor('#666')
+           .font('Inter')
+           .fillColor('black')
            .text('Professional Services Invoice', 50, 80, { align: 'center' });
         
         yPosition = 140;
@@ -63,11 +75,13 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     } else {
       // Fallback to text-only header if no logo
       doc.fontSize(24)
-         .fillColor('#2563eb')
+         .font('Inter-Bold')
+         .fillColor('#D99633')
          .text('GYGG PLATFORM', 50, 50, { align: 'center' });
       
       doc.fontSize(16)
-         .fillColor('#666')
+         .font('Inter')
+         .fillColor('black')
          .text('Professional Services Invoice', 50, 80, { align: 'center' });
       
       yPosition = 140;
@@ -76,19 +90,16 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     // Add a line separator
     doc.moveTo(50, yPosition)
        .lineTo(550, yPosition)
-       .strokeColor('#2563eb')
        .lineWidth(2)
        .stroke();
     
     // Invoice details section
     yPosition += 30;
     doc.fontSize(14)
-       .fillColor('#333')
        .text('INVOICE DETAILS', 50, yPosition, { underline: true });
     
     yPosition += 25;
     doc.fontSize(11)
-       .fillColor('#666')
        .text(`Invoice Number: INV-${invoiceData.paymentId}`, 50, yPosition)
        .text(`Date Issued: ${invoiceData.date}`, 300, yPosition)
        .text('Payment Status: Completed', 50, yPosition + 15)
@@ -97,77 +108,62 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     // Service provider section
     yPosition += 60;
     doc.fontSize(14)
-       .fillColor('#333')
        .text('SERVICE PROVIDER', 50, yPosition, { underline: true });
     
     yPosition += 25;
     doc.fontSize(11)
-       .fillColor('#666')
        .text(`Name: ${invoiceData.taskerFirstName} ${invoiceData.taskerLastName}`, 50, yPosition)
        .text(`Email: ${invoiceData.taskerEmail}`, 50, yPosition + 15);
     
     // Client section
     yPosition += 50;
     doc.fontSize(14)
-       .fillColor('#333')
        .text('CLIENT INFORMATION', 50, yPosition, { underline: true });
     
     yPosition += 25;
     doc.fontSize(11)
-       .fillColor('#666')
        .text(`Name: ${invoiceData.providerFirstName} ${invoiceData.providerLastName}`, 50, yPosition)
        .text(`Email: ${invoiceData.providerEmail}`, 50, yPosition + 15);
     
     // Service details
     yPosition += 50;
     doc.fontSize(14)
-       .fillColor('#333')
        .text('SERVICE DETAILS', 50, yPosition, { underline: true });
     
     yPosition += 25;
     doc.fontSize(11)
-       .fillColor('#666')
        .text(`Service: ${invoiceData.gigTitle}`, 50, yPosition)
        .text(`Contract ID: ${invoiceData.contractId}`, 50, yPosition + 15);
     
     // Payment breakdown - IMPROVED VERSION
     yPosition += 60;
     doc.fontSize(14)
-       .fillColor('#333')
        .text('PAYMENT BREAKDOWN', 50, yPosition, { underline: true });
     
     yPosition += 25;
     if (userRole === 'provider') {
       // Provider invoice shows what they pay
       doc.fontSize(11)
-         .fillColor('#666')
          .text(`Service Amount (to tasker):`, 50, yPosition)
-         .text(`$${invoiceData.amount}`, 400, yPosition, { align: 'right' })
+         .text(`${invoiceData.amount}`, 400, yPosition, { align: 'right' })
          .text(`Platform Fee (to platform):`, 50, yPosition + 15)
-         .fillColor('#e67e22')
-         .text(`$${invoiceData.platformFee}`, 400, yPosition + 15, { align: 'right' })
-         .fillColor('#666')
+         .text(`${invoiceData.platformFee}`, 400, yPosition + 15, { align: 'right' })
          .text(`Tax (HST/GST):`, 50, yPosition + 30)
          .text(`$${invoiceData.providerTax || invoiceData.tax}`, 400, yPosition + 30, { align: 'right' });
     } else {
       // Tasker invoice shows what they receive (full amount, no deductions)
       doc.fontSize(11)
-         .fillColor('#666')
          .text(`Service Amount Received:`, 50, yPosition)
-         .fillColor('#27ae60')
-         .text(`$${invoiceData.amount}`, 400, yPosition, { align: 'right' })
-         .fillColor('#999')
+         .text(`${invoiceData.amount}`, 400, yPosition, { align: 'right' })
          .text(`Platform Fee (paid by provider):`, 50, yPosition + 15)
-         .text(`$${invoiceData.platformFee}`, 400, yPosition + 15, { align: 'right' })
+         .text(`${invoiceData.platformFee}`, 400, yPosition + 15, { align: 'right' })
          .text(`Tax (paid by provider):`, 50, yPosition + 30)
-         .text(`$${invoiceData.providerTax || invoiceData.tax}`, 400, yPosition + 30, { align: 'right' });
+         .text(`${invoiceData.providerTax || invoiceData.tax}`, 400, yPosition + 30, { align: 'right' });
       
       // Add note for tasker
       yPosition += 60;
       doc.fontSize(10)
-         .fillColor('#27ae60')
          .text('✓ You receive the full service amount with no deductions!', 50, yPosition)
-         .fillColor('#666')
          .text('Platform fees and taxes are paid separately by the client.', 50, yPosition + 15);
     }
     
@@ -175,7 +171,6 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     yPosition += 50;
     doc.moveTo(50, yPosition)
        .lineTo(550, yPosition)
-       .strokeColor('#ccc')
        .lineWidth(1)
        .stroke();
     
@@ -183,28 +178,22 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     yPosition += 15;
     if (userRole === 'provider') {
       doc.fontSize(12)
-         .fillColor('#2563eb')
          .text('TOTAL AMOUNT PAID:', 50, yPosition)
-         .fillColor('#e53935')
-         .text(`$${invoiceData.totalProviderPayment || invoiceData.amount}`, 400, yPosition, { align: 'right' });
+         .text(`${invoiceData.totalProviderPayment || invoiceData.amount}`, 400, yPosition, { align: 'right' });
       
       // Add note for provider
       yPosition += 30;
       doc.fontSize(10)
-         .fillColor('#666')
          .text('This amount includes the service fee, platform fee, and applicable taxes.', 50, yPosition);
     } else {
       doc.fontSize(12)
-         .fillColor('#2563eb')
          .text('NET AMOUNT RECEIVED:', 50, yPosition)
-         .fillColor('#27ae60')
-         .text(`$${invoiceData.payout}`, 400, yPosition, { align: 'right' });
+         .text(`${invoiceData.payout}`, 400, yPosition, { align: 'right' });
     }
     
     // Footer
     yPosition += 80;
     doc.fontSize(10)
-       .fillColor('#666')
        .text('Thank you for using Gygg Platform!', 50, yPosition, { align: 'center' })
        .text('Platform fees support our service and help us maintain a secure marketplace.', 50, yPosition + 15, { align: 'center' })
        .text('For support: support@gygg.com | www.gygg.com', 50, yPosition + 30, { align: 'center' })
