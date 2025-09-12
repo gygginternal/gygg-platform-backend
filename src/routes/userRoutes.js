@@ -266,7 +266,9 @@ if (process.env.NODE_ENV === 'development') {
         const token = user.createEmailVerificationToken();
         await user.save({ validateBeforeSave: false });
         
-        const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+        const frontendURL = process.env.ADDITIONAL_FRONTEND_URLS ? 
+          process.env.ADDITIONAL_FRONTEND_URLS.split(',')[0].trim() : 
+          "http://localhost:3000";
         const verificationURL = `${frontendURL}/verify-email?token=${token}`;
         
         res.json({

@@ -9,6 +9,24 @@ import logger from "../utils/logger.js";
 import { stripe } from "./paymentController.js";
 
 /**
+ * Helper function to get the appropriate frontend URL for email verification
+ * Uses ADDITIONAL_FRONTEND_URLS only - does not fall back to FRONTEND_URL
+ */
+const getEmailVerificationURL = () => {
+  // Check if ADDITIONAL_FRONTEND_URLS is configured
+  if (process.env.ADDITIONAL_FRONTEND_URLS) {
+    // Split by comma and take the first URL (assuming it's the primary one)
+    const urls = process.env.ADDITIONAL_FRONTEND_URLS.split(',').map(url => url.trim());
+    if (urls.length > 0 && urls[0]) {
+      return urls[0];
+    }
+  }
+  
+  // If ADDITIONAL_FRONTEND_URLS is not configured, use localhost as fallback for development
+  return "http://localhost:3000";
+};
+
+/**
  * Signs a JWT token for the given user ID.
  * @param {string} userId - The unique identifier of the user.
  * @returns {string} - The signed JWT token.
@@ -83,8 +101,8 @@ const sendVerificationEmail = async (user, req) => {
     throw error;
   }
 
-  // Use gygg.app for production URLs
-  const frontendBaseURL = process.env.FRONTEND_URL || "http://localhost:3000";
+  // Use the appropriate frontend URL for email verification
+  const frontendBaseURL = getEmailVerificationURL();
   
   // Create verification URL that goes directly to frontend
   const verificationURL = `${frontendBaseURL}/verify-email?token=${verificationToken}`;
@@ -613,7 +631,7 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
     );
     
     // Redirect to frontend with error message
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendURL = getEmailVerificationURL();
     return res.redirect(302, `${frontendURL}/verify-email?error=invalid_token&message=This verification link is invalid or has expired. Please request a new verification email below.`);
   }
 
@@ -631,7 +649,7 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
     await userWithToken.save({ validateBeforeSave: false });
     
     // Redirect to frontend with expired token message
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendURL = getEmailVerificationURL();
     return res.redirect(302, `${frontendURL}/verify-email?error=expired_token&message=Token has expired. Please request a new verification email.&email=${encodeURIComponent(userWithToken.email)}`);
   }
 
@@ -654,7 +672,7 @@ export const verifyEmail = catchAsync(async (req, res, next) => {
   logger.info(`Email verified successfully for user ${userWithToken._id}`);
 
   // Redirect to frontend choose page after successful verification
-  const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendURL = getEmailVerificationURL();
   return res.redirect(302, `${frontendURL}/choose?message=Email verified successfully! You can now log in.`);
 });
 
@@ -739,8 +757,8 @@ export const forgotPassword = catchAsync(async (req, res, next) => {
   const resetToken = user.createPasswordResetToken();
   await user.save({ validateBeforeSave: false });
   
-  // Use gygg.app for production URLs
-  const frontendBaseURL = process.env.FRONTEND_URL || "http://localhost:3000";
+  // Use the appropriate frontend URL for password reset
+  const frontendBaseURL = getEmailVerificationURL();
   const resetURL = `${frontendBaseURL}/reset-password?token=${resetToken}`;
   
   // For backward compatibility, also create API URL (but prefer frontend URL)
