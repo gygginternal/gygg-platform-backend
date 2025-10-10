@@ -5,6 +5,7 @@ import validator from "validator";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import logger from "../utils/logger.js";
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 // ---------------- Address Schema ---------------- //
 const addressSchema = new mongoose.Schema(
@@ -283,6 +284,47 @@ userSchema.index(
 );
 
 // ---------------- Document Middleware ---------------- //
+
+// Pre-save middleware to sanitize user-generated content
+userSchema.pre("save", function(next) {
+  // Sanitize bio field
+  if (this.bio && typeof this.bio === 'string') {
+    this.bio = sanitizeMessageContent(this.bio);
+  }
+  
+  // Sanitize peoplePreference array fields
+  if (this.peoplePreference && Array.isArray(this.peoplePreference)) {
+    this.peoplePreference = this.peoplePreference.map(pref => 
+      typeof pref === 'string' ? sanitizeMessageContent(pref) : pref
+    );
+  }
+  
+  // Sanitize skills array fields
+  if (this.skills && Array.isArray(this.skills)) {
+    this.skills = this.skills.map(skill => 
+      typeof skill === 'string' ? sanitizeMessageContent(skill) : skill
+    );
+  }
+  
+  // Sanitize hobbies array fields
+  if (this.hobbies && Array.isArray(this.hobbies)) {
+    this.hobbies = this.hobbies.map(hobby => 
+      typeof hobby === 'string' ? sanitizeMessageContent(hobby) : hobby
+    );
+  }
+  
+  // Sanitize caption fields in album photos
+  if (this.album && Array.isArray(this.album)) {
+    this.album = this.album.map(photo => {
+      if (photo.caption && typeof photo.caption === 'string') {
+        photo.caption = sanitizeMessageContent(photo.caption);
+      }
+      return photo;
+    });
+  }
+  
+  next();
+});
 
 // Encrypt password before saving
 userSchema.pre("save", async function (next) {

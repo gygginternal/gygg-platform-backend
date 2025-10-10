@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 // Define schema for chat messages
 const chatMessageSchema = new mongoose.Schema(
@@ -72,6 +73,19 @@ const chatMessageSchema = new mongoose.Schema(
     timestamps: { createdAt: "timestamp", updatedAt: false }, // Set createdAt as 'timestamp' and no updatedAt
   }
 );
+
+// Pre-save middleware to sanitize content before storing
+chatMessageSchema.pre('save', function(next) {
+  if (this.content && typeof this.content === 'string') {
+    this.content = sanitizeMessageContent(this.content, this.type || 'text');
+  }
+  
+  if (this.htmlContent && typeof this.htmlContent === 'string') {
+    this.htmlContent = sanitizeMessageContent(this.htmlContent, 'html');
+  }
+  
+  next();
+});
 
 // Pre-find middleware to populate sender details (firstName, lastName, and profileImage)
 chatMessageSchema.pre(/^find/, function (next) {

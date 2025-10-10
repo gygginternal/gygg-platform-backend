@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 // Category and subcategory definitions
 const CATEGORY_ENUM = [

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 // Define the schema for a comment
 const commentSchema = new mongoose.Schema({
@@ -90,8 +91,35 @@ const socialPostSchema = new mongoose.Schema({
     },
 }, { timestamps: true }); // Automatically adds createdAt and updatedAt fields
 
-// Pre-save middleware to update likeCount and commentCount before saving the post
+// Pre-save middleware to sanitize content and update likeCount and commentCount before saving the post
 socialPostSchema.pre('save', function(next) {
+    // Sanitize post content
+    if (this.content && typeof this.content === 'string') {
+        this.content = sanitizeMessageContent(this.content);
+    }
+    
+    // Sanitize tags
+    if (this.tags && Array.isArray(this.tags)) {
+        this.tags = this.tags.map(tag => 
+            typeof tag === 'string' ? sanitizeMessageContent(tag) : tag
+        );
+    }
+    
+    // Sanitize location address
+    if (this.location && this.location.address && typeof this.location.address === 'string') {
+        this.location.address = sanitizeMessageContent(this.location.address);
+    }
+    
+    // Sanitize comments
+    if (this.comments && Array.isArray(this.comments)) {
+        this.comments = this.comments.map(comment => {
+            if (comment.text && typeof comment.text === 'string') {
+                comment.text = sanitizeMessageContent(comment.text);
+            }
+            return comment;
+        });
+    }
+    
     // If likes array is modified, update likeCount to match the number of likes
     if (this.isModified('likes')) {
         this.likeCount = this.likes.length;

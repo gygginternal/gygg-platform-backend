@@ -14,6 +14,7 @@ import {
   getImageViolationMessage,
   shouldBlockImage
 } from "../utils/contentFilter.js";
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 let chatWebsocket;
 
@@ -138,8 +139,10 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     return next(new AppError(errorMessage, 400));
   }
 
-  // Use cleaned message if there were minor violations
-  const finalMessage = contentCheck.isClean ? message.trim() : contentCheck.cleanedText;
+  // Use cleaned message if there were minor violations, then apply additional sanitization
+  let finalMessage = contentCheck.isClean ? message.trim() : contentCheck.cleanedText;
+  // Apply additional XSS sanitization as an extra layer of protection
+  finalMessage = sanitizeMessageContent(finalMessage, type || 'text');
 
   // Verify that the user is authorized to send a message for the given contract (if provided)
   const contract = await verifyContractParty(contractId, req.user.id);
@@ -213,7 +216,7 @@ export const sendMessage = catchAsync(async (req, res, next) => {
   await Notification.create({
     user: receiverId,
     type: 'new_message',
-    message: `${req.user.firstName} sent you a message`,
+    message: sanitizeMessageContent(`${req.user.firstName} sent you a message`),
     data: { contractId },
     icon: 'message.svg',
     link: '/messages',

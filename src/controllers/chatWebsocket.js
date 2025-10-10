@@ -5,6 +5,7 @@ import Notification from "../models/Notification.js";
 import logger from "../utils/logger.js";
 import jwt from "jsonwebtoken";
 import AppError from "../utils/AppError.js";
+import { sanitizeInput, sanitizeMessageContent, xssPatterns } from "../utils/sanitizer.js";
 
 /**
  * Initialize WebSocket server for chat functionality with enhanced security.
@@ -113,14 +114,8 @@ export const initializeChatWebsocket = (server) => {
       `[WS] Client connected: ${socket.id} (User: ${socket.user.id})`
     );
 
-    // Sanitize input helper function
-    const sanitizeInput = (input) => {
-      if (typeof input === "string") {
-        // Remove potential XSS and injection patterns
-        return input.replace(/[<>'"();]/g, "");
-      }
-      return input;
-    };
+    // Use imported sanitizeInput function instead of local one
+    // The function is now imported from ../utils/sanitizer.js
 
     // Validate room name format
     const isValidRoomName = (room) => {
@@ -266,8 +261,8 @@ export const initializeChatWebsocket = (server) => {
       ) {
         // Sanitize message content if it's a text message
         if (message.content && message.type === "text") {
-          // Basic sanitization for text content
-          message.content = message.content.replace(/[<>'"();]/g, "");
+          // Use comprehensive sanitization instead of basic regex
+          message.content = sanitizeMessageContent(message.content, message.type);
         }
 
         io.to(socketData.socketId).emit("chat:newMessage", message);
@@ -355,8 +350,8 @@ export const initializeChatWebsocket = (server) => {
               newMessage.type === "text" &&
               typeof sanitizedContent === "string"
             ) {
-              // Remove potential XSS and injection patterns
-              sanitizedContent = sanitizedContent.replace(/[<>'"();]/g, "");
+              // Use comprehensive sanitization instead of basic regex
+              sanitizedContent = sanitizeMessageContent(sanitizedContent, newMessage.type);
             }
 
             // Emit to the specific chat channel (for open chat windows)
@@ -461,10 +456,10 @@ export const initializeChatWebsocket = (server) => {
             _id: notification._id.toString(),
             type: notification.type,
             title: notification.title
-              ? notification.title.replace(/[<>'"();]/g, "")
+              ? sanitizeMessageContent(notification.title)
               : "",
             message: notification.message
-              ? notification.message.replace(/[<>'"();]/g, "")
+              ? sanitizeMessageContent(notification.message)
               : "",
             read: notification.read || false,
             createdAt: notification.createdAt,

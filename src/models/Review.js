@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import User from './User.js'; // Ensure extension `.js` is used for ESM import
+import { sanitizeMessageContent } from "../utils/sanitizer.js";
 
 const reviewSchema = new mongoose.Schema({
   contract: {
@@ -46,6 +47,14 @@ const reviewSchema = new mongoose.Schema({
 reviewSchema.index({ reviewee: 1 });
 reviewSchema.index({ reviewer: 1 });
 reviewSchema.index({ gig: 1 });
+
+// Pre-save middleware to sanitize review comment
+reviewSchema.pre('save', function(next) {
+  if (this.comment && typeof this.comment === 'string') {
+    this.comment = sanitizeMessageContent(this.comment);
+  }
+  next();
+});
 
 // Static method to calculate average rating
 reviewSchema.statics.calculateAverageRating = async function (taskerId) {
