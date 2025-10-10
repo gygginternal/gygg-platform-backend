@@ -10,6 +10,7 @@ import logger from "./utils/logger.js"; // Custom logger (e.g., using Winston or
 import http from "http"; // Needed to create an HTTP server for WebSocket integration
 import { initializeChatWebsocket } from "./controllers/chatWebsocket.js"; // Import chat WebSocket logic
 import { setChatWebsocket } from './controllers/chatController.js';
+import { startTokenCleanupJob } from './utils/tokenCleanup.js'; // Import the token cleanup job
 
 // --- Handle Uncaught Synchronous Exceptions ---
 process.on("uncaughtException", (err) => {
@@ -21,8 +22,16 @@ process.on("uncaughtException", (err) => {
   process.exit(1); // Exit immediately, no chance to recover from sync errors
 });
 
-// --- Connect to MongoDB ---
-connectDB(); // Automatically logs success/failure and handles exit on failure
+// --- Connect to MongoDB and start token cleanup job after connection ---
+connectDB().then(() => {
+  // Start token cleanup job only after database connection is established
+  if (process.env.NODE_ENV !== 'test') {
+    startTokenCleanupJob();
+  }
+}).catch(error => {
+  logger.error('Failed to connect to MongoDB:', error);
+  process.exit(1);
+}); // Automatically logs success/failure and handles exit on failure
 
 // --- Create HTTP Server ---
 const PORT = process.env.PORT || 5000;
@@ -48,13 +57,17 @@ process.on("unhandledRejection", (err) => {
   });
 
   // Attempt graceful shutdown
-  server.close(() => {
+  server.close(async () => {
     logger.info("🛑 Server closed after unhandled rejection.");
 
-    mongoose.connection.close(false, () => {
+    try {
+      await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
+    } catch (closeError) {
+      logger.error("Error closing MongoDB connection:", closeError);
+    } finally {
       process.exit(1); // Exit with failure code
-    });
+    }
   });
 
   setTimeout(() => {
@@ -67,12 +80,16 @@ process.on("unhandledRejection", (err) => {
 process.on("SIGTERM", () => {
   logger.info("👋 SIGTERM received. Shutting down gracefully...");
 
-  server.close(() => {
+  server.close(async () => {
     logger.info("🛑 HTTP server closed.");
 
-    mongoose.connection.close(false, () => {
+    try {
+      await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
+    } catch (closeError) {
+      logger.error("Error closing MongoDB connection:", closeError);
+    } finally {
       process.exit(0); // Exit cleanly
-    });
+    }
   });
 });

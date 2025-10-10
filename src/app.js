@@ -168,9 +168,4 @@ app.all("*", (req, res, next) => {
 
 app.use(globalErrorHandler);
 
-// Start token cleanup job
-if (process.env.NODE_ENV !== 'test') {
-  startTokenCleanupJob();
-}
-
 export default app;

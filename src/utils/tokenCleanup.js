@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import logger from './logger.js';
 
@@ -60,16 +61,23 @@ export const cleanupExpiredTokens = async () => {
  * Starts the token cleanup job that runs every hour
  */
 export const startTokenCleanupJob = () => {
-  // Run cleanup immediately
-  cleanupExpiredTokens().catch(error => {
-    logger.error('Initial token cleanup failed:', error);
-  });
+  // Run cleanup after a short delay to ensure connection is ready
+  setTimeout(() => {
+    cleanupExpiredTokens().catch(error => {
+      logger.error('Initial token cleanup failed:', error);
+    });
+  }, 2000); // 2 second delay to allow connection to establish
   
   // Then run every hour (3600000 ms)
   setInterval(() => {
-    cleanupExpiredTokens().catch(error => {
-      logger.error('Scheduled token cleanup failed:', error);
-    });
+    // Check if mongoose is connected before attempting cleanup
+    if (mongoose.connection.readyState === 1) { // 1 means connected
+      cleanupExpiredTokens().catch(error => {
+        logger.error('Scheduled token cleanup failed:', error);
+      });
+    } else {
+      logger.warn('Skipping token cleanup - MongoDB not connected');
+    }
   }, 3600000); // 1 hour
   
   logger.info('Token cleanup job started - running every hour');

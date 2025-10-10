@@ -20,6 +20,24 @@ const connectDB = async () => {
       process.exit(1); // Exit with failure
     }
 
+    // Add additional options to handle connection issues
+    const conn = await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 5000, // Keep trying to select a server for 5 seconds
+      maxPoolSize: 10, // Maintain up to 10 socket connections
+      socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    });
+    
+    logger.info(`✅ MongoDB Connected: ${conn.connection.host}`);
+
+    // Add listeners for connection-related events
+    mongoose.connection.on('error', (err) => {
+      logger.error('❌ MongoDB connection error:', { error: err });
+    });
+
+    mongoose.connection.on('disconnected', () => {
+      logger.warn('⚠️ MongoDB disconnected.');
+    });
+    
     // Warn if using local MongoDB without a replica set (required for transactions)
     if (
       mongoUri.includes('localhost') &&
@@ -27,26 +45,14 @@ const connectDB = async () => {
     ) {
       logger.warn('⚠️ WARNING: Local MongoDB URL does not specify a replicaSet. Transactions may fail.');
     }
-
-    // Attempt to connect to MongoDB
-    const conn = await mongoose.connect(mongoUri);
-    logger.info(`✅ MongoDB Connected: ${conn.connection.host}`);
-
-    // Add listeners for connection-related events
-    mongoose.connection.on('error', (err) => {
-      logger.error('❌ MongoDB connection error:', { error: err });
-      process.exit(1);
-    });
-
-    mongoose.connection.on('disconnected', () => {
-      logger.warn('⚠️ MongoDB disconnected.');
-    });
+    
+    return conn;
   } catch (error) {
     logger.error('❌ Error connecting to MongoDB:', {
       errorMessage: error.message,
       error,
     });
-    process.exit(1); // Exit with failure
+    process.exit(1); // Exit with failure since MongoDB is essential for this application
   }
 };
 
