@@ -34,8 +34,62 @@ import { startTokenCleanupJob } from "./utils/tokenCleanup.js";
 // --- App Initialization ---
 const app = express();
 
+// Add timeout protection middleware to prevent slowloris and similar attacks
+app.use((req, res, next) => {
+  // Set request timeout to prevent hanging connections
+  req.setTimeout(30000, () => { // 30 seconds timeout
+    req.destroy();
+  });
+  
+  // Prevent large payloads through headers
+  if (req.headers['content-length']) {
+    const contentLength = parseInt(req.headers['content-length'], 10);
+    if (contentLength > 10 * 1024) { // 10KB limit
+      return res.status(413).json({
+        status: 'fail',
+        message: 'Request entity too large'
+      });
+    }
+  }
+  
+  next();
+});
+
 // --- Security Middleware ---
-app.use(helmet()); // Set security HTTP headers
+app.use(helmet({
+  hsts: {
+    maxAge: 31536000, // 1 year in seconds
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: {
+    action: 'deny',
+  },
+  contentSecurityPolicy: {
+    directives: {
+      'default-src': ["'self'"],
+      'style-src': ["'self'", "'unsafe-inline'"],
+      'script-src': ["'self'"],
+      'img-src': ["'self'", "data:", "https:"],
+      'connect-src': ["'self'", "https://*.s3.amazonaws.com"], // Allow S3 connections
+      'font-src': ["'self'", "https:", "data:"],
+      'object-src': ["'none'"], // Prevent embedding plugins
+      'upgrade-insecure-requests': [],
+    },
+  },
+  referrerPolicy: {
+    policy: 'no-referrer',
+  },
+  permittedCrossDomainPolicies: {
+    permittedPolicies: 'none',
+  },
+  // Additional security measures
+  hidePoweredBy: true, // Hide X-Powered-By header
+})); // Set security HTTP headers
+
+// --- Enhanced Security Headers ---
+import { securityHeaders } from './middleware/monitoring.js';
+app.use(securityHeaders); // Add additional security headers
 // Dynamic CORS configuration
 const getAllowedOrigins = () => {
   const origins = [
@@ -86,18 +140,76 @@ app.use(
     preflightContinue: false,
   })
 );
-app.use(express.json({ limit: "10kb" })); // Body parser, reading data from body into req.body
+// Enhanced body parser with comprehensive limits and timeout protection
+app.use(express.json({ 
+  limit: '10kb',
+  // Add timeout protection for slowloris and similar attacks
+  verify: (req, res, buf, encoding) => {
+    // Check for abnormally large content lengths
+    if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 10240) {
+      throw new Error('Request entity too large');
+    }
+  }
+})); 
+
+// Enhanced URL encoding limit for query strings and URL parameters
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '10kb',
+  parameterLimit: 100 // Limit number of parameters to prevent hash flooding
+}));
+
 app.use(cookieParser()); // Parse cookies
 app.use(mongoSanitize()); // Sanitize data against NoSQL query injection
 app.use(xss()); // Sanitize data against XSS
 
-// Rate limiting
-const limiter = rateLimit({
-  max: 1000, // Limit each IP to 1000 requests per windowMs
-  windowMs: 60 * 60 * 1000, // 1 hour
-  message: "Too many requests from this IP, please try again in an hour!",
+// Global rate limiter for all requests
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-app.use("/api", limiter);
+
+// Authentication-specific rate limiter (more restrictive)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // only allow 5 failed attempts per IP
+  message: 'Too many authentication attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// File upload rate limiter
+const fileUploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // limit each IP to 10 file uploads per hour
+  message: 'Too many file uploads from this IP, please try again later.',
+});
+
+// Apply global rate limiter to all requests
+app.use(globalLimiter);
+
+// Apply specific rate limiting to authentication routes
+app.use("/api/v1/users/login", authLimiter);
+app.use("/api/v1/users/signup", authLimiter);
+app.use("/api/v1/users/forgotPassword", authLimiter);
+app.use("/api/v1/users/resetPassword", authLimiter);
+app.use("/api/v1/users/verifyEmail", authLimiter);
+
+// Apply file upload rate limiting to chat image uploads
+app.use("/api/v1/chat/upload-image", fileUploadLimiter);
+
+// General API rate limiting (in addition to global limiter)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs for API
+  message: "Too many requests from this IP to the API, please try again later!",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api", apiLimiter);
 
 // --- Health Check Endpoint ---
 app.get("/health", (req, res) => {

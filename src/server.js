@@ -12,6 +12,9 @@ import { initializeChatWebsocket } from "./controllers/chatWebsocket.js"; // Imp
 import { setChatWebsocket } from './controllers/chatController.js';
 import { startTokenCleanupJob } from './utils/tokenCleanup.js'; // Import the token cleanup job
 
+// Import Redis client
+import redisClient from './config/redis.js';
+
 // --- Handle Uncaught Synchronous Exceptions ---
 process.on("uncaughtException", (err) => {
   logger.error("UNCAUGHT EXCEPTION! 💥 Shutting down...", {
@@ -23,7 +26,15 @@ process.on("uncaughtException", (err) => {
 });
 
 // --- Connect to MongoDB and start token cleanup job after connection ---
-connectDB().then(() => {
+connectDB().then(async () => {
+  // Connect to Redis
+  try {
+    await redisClient.connect();
+    logger.info('✅ Redis client connected');
+  } catch (redisError) {
+    logger.error('❌ Failed to connect to Redis:', redisError);
+  }
+  
   // Start token cleanup job only after database connection is established
   if (process.env.NODE_ENV !== 'test') {
     startTokenCleanupJob();
@@ -36,6 +47,11 @@ connectDB().then(() => {
 // --- Create HTTP Server ---
 const PORT = process.env.PORT || 5000;
 const server = http.createServer(app); // Use the Express app to create an HTTP server
+
+// Add timeout protection to prevent slowloris attacks
+server.setTimeout(30000); // 30 seconds timeout for HTTP requests
+server.headersTimeout = 25000; // 25 seconds for headers
+server.requestTimeout = 20000; // 20 seconds for request
 
 // --- Initialize Chat WebSocket Server ---
 const chatWebsocket = initializeChatWebsocket(server);
@@ -63,8 +79,14 @@ process.on("unhandledRejection", (err) => {
     try {
       await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
+      
+      // Close Redis connection
+      if (redisClient) {
+        await redisClient.quit();
+        logger.info(".Redis connection closed.");
+      }
     } catch (closeError) {
-      logger.error("Error closing MongoDB connection:", closeError);
+      logger.error("Error closing connections:", closeError);
     } finally {
       process.exit(1); // Exit with failure code
     }
@@ -86,8 +108,14 @@ process.on("SIGTERM", () => {
     try {
       await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
+      
+      // Close Redis connection
+      if (redisClient) {
+        await redisClient.quit();
+        logger.info(".Redis connection closed.");
+      }
     } catch (closeError) {
-      logger.error("Error closing MongoDB connection:", closeError);
+      logger.error("Error closing connections:", closeError);
     } finally {
       process.exit(0); // Exit cleanly
     }

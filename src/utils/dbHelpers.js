@@ -10,12 +10,13 @@ import logger from './logger.js';
  * @returns {Promise<Document>} The found document
  * @throws {AppError} If document not found or invalid ID
  */
-export const findDocumentById = async (Model, id, errorMessage = 'Document not found') => {
+export const findDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
   
-  const doc = await Model.findById(id);
+  // Add query timeout to prevent hanging requests
+  const doc = await Model.findById(id).maxTimeMS(timeoutMs);
   if (!doc) {
     throw new AppError(errorMessage, 404);
   }
@@ -31,12 +32,12 @@ export const findDocumentById = async (Model, id, errorMessage = 'Document not f
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The found document with populated fields
  */
-export const findDocumentByIdWithPopulate = async (Model, id, populateFields, errorMessage = 'Document not found') => {
+export const findDocumentByIdWithPopulate = async (Model, id, populateFields, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
   
-  const doc = await Model.findById(id).populate(populateFields);
+  const doc = await Model.findById(id).populate(populateFields).maxTimeMS(timeoutMs);
   if (!doc) {
     throw new AppError(errorMessage, 404);
   }
@@ -53,12 +54,12 @@ export const findDocumentByIdWithPopulate = async (Model, id, populateFields, er
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The updated document
  */
-export const updateDocumentById = async (Model, id, updateData, options = { new: true, runValidators: true }, errorMessage = 'Document not found') => {
+export const updateDocumentById = async (Model, id, updateData, options = { new: true, runValidators: true }, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
   
-  const doc = await Model.findByIdAndUpdate(id, updateData, options);
+  const doc = await Model.findByIdAndUpdate(id, updateData, { ...options, maxTimeMS: timeoutMs });
   if (!doc) {
     throw new AppError(errorMessage, 404);
   }
@@ -73,12 +74,12 @@ export const updateDocumentById = async (Model, id, updateData, options = { new:
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The deleted document
  */
-export const deleteDocumentById = async (Model, id, errorMessage = 'Document not found') => {
+export const deleteDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
   
-  const doc = await Model.findByIdAndDelete(id);
+  const doc = await Model.findByIdAndDelete(id).maxTimeMS(timeoutMs);
   if (!doc) {
     throw new AppError(errorMessage, 404);
   }
@@ -131,10 +132,13 @@ export const checkResourceOwnership = (resource, userId, resourceField = 'user',
  * @param {number} limit - Items per page (default: 10)
  * @returns {Object} Paginated results with metadata
  */
-export const paginateResults = async (query, page = 1, limit = 10) => {
+export const paginateResults = async (query, page = 1, limit = 10, timeoutMs = 10000) => {
   const skip = (page - 1) * limit;
-  const results = await query.skip(skip).limit(limit);
-  const total = await query.model.countDocuments(query.getQuery());
+  // Add timeout to both the main query and count query
+  const resultsPromise = query.skip(skip).limit(limit).maxTimeMS(timeoutMs);
+  const countQuery = query.model.countDocuments(query.getQuery()).maxTimeMS(timeoutMs);
+  
+  const [results, total] = await Promise.all([resultsPromise, countQuery]);
   
   return {
     results,
