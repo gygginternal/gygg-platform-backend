@@ -240,6 +240,29 @@ app.post(
   stripeWebhookHandler
 );
 
+// --- Nuvei Webhook Handler (needs raw body) ---
+app.post(
+  "/api/v1/payments/webhook/nuvei",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    // Convert raw body to JSON for Nuvei webhook handler
+    if (req.body && typeof req.body === 'string') {
+      try {
+        req.body = JSON.parse(req.body);
+      } catch (err) {
+        return next(new AppError('Invalid JSON in request body', 400));
+      }
+    }
+    // Import the function directly since we're using ES modules in the controller
+    import('./controllers/paymentController.js')
+      .then(controllerModule => {
+        const { handleNuveiWebhook } = controllerModule;
+        return handleNuveiWebhook(req, res, next);
+      })
+      .catch(err => next(err));
+  }
+);
+
 // --- Mount Routers ---
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/taskers", taskersRouter);

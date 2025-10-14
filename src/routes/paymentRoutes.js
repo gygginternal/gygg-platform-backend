@@ -18,6 +18,11 @@ import {
   getOnboardingRequirements, // Import the new controller function
   getEarningsSummary, // Import the new earnings summary function
   getPaymentHistory, // Import the new payment history function
+  // Nuvei-specific imports
+  createNuveiPaymentSession,
+  getNuveiPaymentSession,
+  confirmNuveiPayment,
+  handleNuveiWebhook,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -205,6 +210,52 @@ router.get(
   protect,
   restrictTo("tasker", "provider"),
   getOnboardingRequirements
+);
+
+// Nuvei payment routes
+router.post(
+  "/nuvei/create-session",
+  [
+    restrictTo("provider"), // Only providers can initiate payments
+  ],
+  validateRequest,
+  createNuveiPaymentSession
+);
+
+router.get(
+  "/nuvei/session/:sessionId",
+  [
+    restrictTo("provider", "tasker"), // Both can check session status
+  ],
+  validateRequest,
+  getNuveiPaymentSession
+);
+
+router.post(
+  "/nuvei/confirm-payment",
+  [
+    restrictTo("provider"), // Only the provider can confirm payment
+  ],
+  validateRequest,
+  confirmNuveiPayment
+);
+
+// Webhook endpoint for Nuvei payment confirmations
+router.post(
+  "/webhook/nuvei",
+  // No authentication needed as this is a webhook from Nuvei
+  handleNuveiWebhook
+);
+
+// Route to create Nuvei payment intent for a specific contract
+router.post(
+  "/contracts/:contractId/create-nuvei-payment",
+  [
+    restrictTo("provider"), // Only the provider can create a payment
+    param("contractId").isMongoId().withMessage("Invalid Contract ID format"), // Validate contractId as MongoDB ObjectId
+  ],
+  validateRequest,
+  createNuveiPaymentSession
 );
 
 export default router;

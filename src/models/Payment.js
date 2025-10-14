@@ -143,11 +143,73 @@ const paymentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Tasker's Stripe Connected Account ID
+    // Payment provider (Stripe or Nuvei)
+    paymentProvider: {
+      type: String,
+      enum: ['stripe', 'nuvei'],
+      default: 'stripe',
+      required: true,
+    },
+
+    // Stripe fields (only required for Stripe payments)
     stripeConnectedAccountId: {
       type: String,
-      required: true,
+      required: function() { return this.paymentProvider === 'stripe'; },
+    },
+    stripePaymentIntentSecret: {
+      type: String,
       index: true,
+      unique: true,
+      sparse: true, // This field might be missing in some payments, so it is sparse.
+    },
+    stripePayoutId: {
+      type: String,
+      index: true,
+      unique: true,
+      sparse: true, // This field might be missing in some payments, so it is sparse.
+    },
+    stripePaymentIntentId: {
+      type: String,
+      index: true,
+      unique: true,
+      sparse: true, // This field might be missing in some payments, so it is sparse.
+    },
+    stripeChargeId: {
+      type: String,
+      index: true,
+    },
+    stripeTransferId: {
+      type: String,
+      index: true,
+      sparse: true, // This field might not exist for all payments
+    },
+    stripeRefundId: {
+      type: String,
+      index: true,
+    },
+
+    // Nuvei-specific fields (only required for Nuvei payments)
+    nuveiSessionId: {
+      type: String,
+      index: true,
+      sparse: true,
+    },
+    nuveiTransactionId: {
+      type: String,
+      index: true,
+      sparse: true,
+    },
+    nuveiPaymentToken: {
+      type: String,
+      sparse: true,
+    },
+    nuveiMerchantId: {
+      type: String,
+      sparse: true,
+    },
+    nuveiMerchantSiteId: {
+      type: String,
+      sparse: true,
     },
 
     // --- Timestamps ---

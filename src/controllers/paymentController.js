@@ -10,7 +10,9 @@ import logger from '../utils/logger.js';
 import notifyAdmin from '../utils/notifyAdmin.js';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
-import { generateInvoicePdf } from '../utils/invoicePdf_with_logo.js';
+import { generateInvoicePdf } from '../utils/invoicePdfWithLogo.js';
+import https from 'https';
+import { URL } from 'url';
 
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });
@@ -1922,3 +1924,494 @@ export const initiateAccountSession = catchAsync(async (req, res, next) => {
     return next(new AppError("Could not initiate onboarding session. Please try again.", 500));
   }
 });
+
+// === NUVEI PAYMENT FUNCTIONS ===
+
+// Utility function to make HTTP requests to Nuvei API
+const makeNuveiRequest = async (endpoint, data, method = 'POST') => {
+  const nuveiUrl = process.env.NODE_ENV === 'production' 
+    ? process.env.NUVEI_API_URL || 'https://api.nuvei.com/' 
+    : process.env.NUVEI_SANDBOX_URL || 'https://api.sandbox.nuvei.com/';
+  
+  const apiUrl = new URL(endpoint, nuveiUrl);
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(JSON.stringify(data)),
+    'Authorization': `Bearer ${process.env.NUVEI_API_KEY}`, // or however Nuvei authenticates
+  };
+  
+  const options = {
+    hostname: apiUrl.hostname,
+    port: apiUrl.port || 443,
+    path: apiUrl.pathname + apiUrl.search,
+    method,
+    headers,
+  };
+  
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(JSON.parse(data));
+          } else {
+            reject(new Error(`HTTP error! status: ${res.statusCode}, message: ${data}`));
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    
+    req.on('error', (error) => {
+      console.error('Nuvei API request failed:', error);
+      reject(error);
+    });
+    
+    if (method !== 'GET' && method !== 'HEAD') {
+      req.write(JSON.stringify(data));
+    }
+    
+    req.end();
+  });
+};
+
+// Create a Nuvei payment session for a contract
+export const createNuveiPaymentSession = catchAsync(async (req, res, next) => {
+  const { contractId } = req.body; // changed from req.params for POST
+  const providerId = req.user.id;
+
+  // Validate contract ID
+  if (!mongoose.Types.ObjectId.isValid(contractId))
+    return next(new AppError("Invalid Contract ID format.", 400));
+
+  // Fetch the contract along with the tasker details
+  const contract = await Contract.findById(contractId);
+  if (!contract) return next(new AppError("Contract not found.", 404));
+
+  // Check if the provider is authorized to make the payment
+  if (contract.provider._id.toString() !== providerId)
+    return next(
+      new AppError("Not authorized to pay for this contract.", 403)
+    );
+
+  // Ensure that the contract is in a valid status for payment
+  if (!["active", "submitted", "failed"].includes(contract.status)) {
+    return next(
+      new AppError(
+        `Contract not awaiting payment (status: ${contract.status}).`,
+        400
+      )
+    );
+  }
+
+  // Ensure that the tasker has connected a valid payment receiving method
+  if (!contract.tasker?.stripeAccountId)
+    return next(new AppError("Tasker has not connected payment method.", 400));
+
+  const taskerStripeAccountId = contract.tasker.stripeAccountId;
+
+  // Calculate payment amount based on contract type
+  let serviceAmountInCents;
+  let paymentDescription;
+
+  if (contract.isHourly) {
+    // For hourly contracts, use actual hours worked
+    if (!contract.actualHours || contract.actualHours <= 0) {
+      return next(new AppError("No approved hours found for this hourly contract. Please ensure time entries are approved before payment.", 400));
+    }
+    serviceAmountInCents = Math.round(contract.totalHourlyPayment * 100);
+    paymentDescription = `Payment for ${contract.actualHours} hours at ${contract.hourlyRate}/hr`;
+  } else {
+    // For fixed contracts, use agreed cost
+    serviceAmountInCents = Math.round(contract.agreedCost * 100);
+    paymentDescription = `Payment for fixed-price gig`;
+  }
+
+  if (serviceAmountInCents <= 0) {
+    return next(new AppError("Invalid payment amount calculated.", 400));
+  }
+
+  // --- Calculate payment breakdown (same as Stripe) ---
+  // Use environment variables for fee/tax configuration
+  const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
+  const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
+  const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
+  
+  // Service amount (this is what the tasker receives - the agreed upon amount)
+  const agreedServiceAmount = serviceAmountInCents;
+  
+  // Platform fee calculation (percentage of service amount + fixed fee)
+  // This fee goes to the platform as revenue
+  const applicationFeeAmount = Math.round(agreedServiceAmount * feePercentage) + fixedFeeCents;
+  
+  // Provider pays tax on the total amount they pay (service + platform fee)
+  const providerTaxableAmount = agreedServiceAmount + applicationFeeAmount;
+  const providerTaxAmount = Math.round(providerTaxableAmount * taxPercent);
+  
+  // Total tax amount (only provider tax in this model)
+  const taxAmount = providerTaxAmount;
+  
+  // Total amount provider pays (service amount + platform fee + tax)
+  const totalProviderPayment = agreedServiceAmount + applicationFeeAmount + providerTaxAmount;
+  
+  // Amount tasker receives (the full agreed service amount - no fees deducted)
+  const amountReceivedByPayee = agreedServiceAmount;
+
+  // Create/update payment record
+  let payment = await Payment.findOne({ contract: contractId });
+  if (!payment) {
+    payment = await Payment.create({
+      contract: contractId,
+      gig: contract.gig,
+      payer: providerId,
+      payee: contract.tasker._id,
+      amount: serviceAmountInCents, // Base service amount
+      currency: 'cad', // or based on environment
+      description: paymentDescription,
+      status: "requires_payment_method",
+      paymentProvider: "nuvei", // Specify Nuvei as payment provider
+      // Platform fee details
+      applicationFeeAmount,
+      providerTaxAmount,
+      taxAmount,
+      totalProviderPayment,
+      amountReceivedByPayee,
+    });
+  } else if (!["requires_payment_method", "failed"].includes(payment.status)) {
+    return next(new AppError(`Payment already in status: ${payment.status}`, 400));
+  } else {
+    payment.amount = serviceAmountInCents;
+    payment.status = "requires_payment_method";
+    payment.paymentProvider = "nuvei";
+    // Update fee calculations
+    payment.applicationFeeAmount = applicationFeeAmount;
+    payment.providerTaxAmount = providerTaxAmount;
+    payment.taxAmount = taxAmount;
+    payment.totalProviderPayment = totalProviderPayment;
+    payment.amountReceivedByPayee = amountReceivedByPayee;
+    await payment.save();
+  }
+
+  try {
+    // Prepare Nuvei payment session data
+    const paymentOption = req.body.paymentMethod || 'card'; // Get payment method from request, default to card
+    
+    const nuveiSessionData = {
+      merchantId: process.env.NUVEI_MERCHANT_ID,
+      merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
+      amount: totalProviderPayment / 100, // Convert from cents to dollars
+      currency: 'CAD',
+      orderId: `GYGG-${payment._id}`, // Unique order ID
+      userTokenId: providerId, // User identifier
+      transactionType: 'sale', // Could also be 'auth' for authorization
+      paymentOption: paymentOption, // Use the selected payment option
+      // Additional required fields based on Nuvei documentation
+      clientRequestId: payment._id.toString(), // Unique request ID
+      // Additional payment method specific data will be handled by Nuvei Simply Connect
+      // Do not include sensitive card data here as it should be handled securely by the SDK
+    };
+    
+    // Add InstaDebit specific fields if needed
+    if (paymentOption === 'instadebit') {
+      nuveiSessionData.apm = {
+        provider: 'instadebit',
+        // Add any InstaDebit specific parameters here
+      };
+    }
+
+    // Make request to Nuvei API to create session
+    const nuveiResponse = await makeNuveiRequest('payment/session/create', nuveiSessionData);
+    
+    // Update payment with Nuvei-specific data
+    payment.nuveiSessionId = nuveiResponse.sessionId || nuveiResponse.session_token;
+    payment.nuveiMerchantId = process.env.NUVEI_MERCHANT_ID;
+    payment.nuveiMerchantSiteId = process.env.NUVEI_MERCHANT_SITE_ID;
+    
+    await payment.save();
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        paymentId: payment._id,
+        sessionId: payment.nuveiSessionId,
+        amount: totalProviderPayment / 100,
+        currency: 'CAD',
+        // Provide necessary data for frontend Nuvei integration
+        nuveiConfig: {
+          merchantId: process.env.NUVEI_MERCHANT_ID,
+          merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
+          sessionId: payment.nuveiSessionId,
+          environment: process.env.NODE_ENV === 'production' ? 'live' : 'sandbox',
+        }
+      },
+    });
+  } catch (error) {
+    console.error('Error creating Nuvei payment session:', error);
+    return next(new AppError(`Failed to create Nuvei payment session: ${error.message}`, 500));
+  }
+});
+
+// Get Nuvei payment session details
+export const getNuveiPaymentSession = catchAsync(async (req, res, next) => {
+  const { sessionId } = req.params;
+
+  // Find payment by Nuvei session ID
+  const payment = await Payment.findOne({ nuveiSessionId: sessionId })
+    .populate('contract', 'title')
+    .populate('payer', 'firstName lastName email')
+    .populate('payee', 'firstName lastName email');
+  
+  if (!payment) {
+    return next(new AppError("Nuvei payment session not found.", 404));
+  }
+
+  // Check authorization - only involved parties can access
+  if (![payment.payer._id.toString(), payment.payee._id.toString()].includes(req.user.id) && 
+      !req.user.role.includes('admin')) {
+    return next(new AppError("Not authorized to access this payment session.", 403));
+  }
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      sessionId: payment.nuveiSessionId,
+      paymentId: payment._id,
+      status: payment.status,
+      amount: payment.amount / 100,
+      currency: payment.currency,
+      contract: payment.contract,
+      payer: payment.payer,
+      payee: payment.payee,
+      createdAt: payment.createdAt,
+    }
+  });
+});
+
+// Confirm Nuvei payment (called after payment completion on frontend)
+export const confirmNuveiPayment = catchAsync(async (req, res, next) => {
+  const { nuveiTransactionId, sessionId } = req.body;
+
+  if (!nuveiTransactionId && !sessionId) {
+    return next(new AppError('Nuvei transaction ID or session ID is required', 400));
+  }
+
+  try {
+    // Find the payment record
+    const payment = await Payment.findOne({
+      $or: [
+        { nuveiTransactionId },
+        { nuveiSessionId: sessionId }
+      ]
+    }).populate('contract');
+
+    if (!payment) {
+      return next(new AppError('Payment record not found', 404));
+    }
+
+    // Verify the payment with Nuvei
+    // In a real implementation, we would call Nuvei's API to verify the transaction
+    // For now, we'll assume the transaction is valid
+    const nuveiVerificationData = {
+      merchantId: process.env.NUVEI_MERCHANT_ID,
+      merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
+      transactionId: nuveiTransactionId,
+    };
+
+    let verificationResult = { status: 'success' }; // Simplified for now
+    
+    // For a real implementation, uncomment the next lines:
+    // const verificationResult = await makeNuveiRequest('payment/verify', nuveiVerificationData, 'GET');
+
+    if (verificationResult.status === 'success') {
+      // Update payment status and details
+      payment.status = "succeeded";
+      payment.succeededAt = new Date();
+      payment.nuveiTransactionId = nuveiTransactionId;
+      
+      await payment.save();
+
+      // Update contract status if needed
+      if (payment.contract && payment.contract.status !== "completed") {
+        payment.contract.status = "completed";
+        await payment.contract.save();
+      }
+
+      res.status(200).json({
+        status: "success",
+        message: "Nuvei payment confirmed and contract updated",
+        data: {
+          payment: {
+            id: payment._id,
+            status: payment.status,
+            amount: payment.amount,
+            transactionId: payment.nuveiTransactionId,
+          },
+          contract: {
+            id: payment.contract._id,
+            status: payment.contract.status,
+          }
+        }
+      });
+    } else {
+      return next(new AppError('Nuvei payment verification failed', 400));
+    }
+  } catch (error) {
+    console.error('Error confirming Nuvei payment:', error);
+    return next(new AppError('Failed to confirm Nuvei payment', 500));
+  }
+});
+
+// Handle Nuvei webhook for payment confirmations
+export const handleNuveiWebhook = catchAsync(async (req, res, next) => {
+  const payload = req.body;
+  const sig = req.headers['x-nuvei-signature']; // Assuming Nuvei uses this header
+
+  // Verify webhook signature (implementation depends on Nuvei's signature method)
+  // In a real implementation, you would verify the signature here
+  // For now, we'll skip signature verification for development purposes
+
+  try {
+    // Log the received webhook for debugging
+    console.log('Nuvei webhook received:', JSON.stringify(payload, null, 2));
+
+    // Handle different event types
+    const eventType = payload.type || payload.event_type || 'unknown';
+    const transactionId = payload.transactionId || payload.txnId || payload.id;
+
+    switch (eventType) {
+      case 'payment_success':
+      case 'payment.succeeded':
+        await handleNuveiPaymentSuccess(payload, transactionId);
+        break;
+        
+      case 'payment_failed':
+      case 'payment.failed':
+        await handleNuveiPaymentFailed(payload, transactionId);
+        break;
+        
+      case 'refund_completed':
+      case 'refund.completed':
+        await handleNuveiRefundCompleted(payload, transactionId);
+        break;
+        
+      default:
+        console.log(`Unhandled Nuvei event type: ${eventType}`);
+        break;
+    }
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('Error processing Nuvei webhook:', error);
+    res.status(400).json({ error: 'Webhook error', message: error.message });
+  }
+});
+
+// Handler for Nuvei payment success event
+const handleNuveiPaymentSuccess = async (data, transactionId) => {
+  try {
+    // Find payment by Nuvei transaction ID or session ID
+    const payment = await Payment.findOne({
+      $or: [
+        { nuveiTransactionId: transactionId },
+        { nuveiSessionId: data.sessionId || data.session_id }
+      ]
+    });
+
+    if (!payment) {
+      console.error(`❌ Payment not found for Nuvei transaction: ${transactionId}`);
+      return;
+    }
+
+    // Update payment status and details
+    payment.status = "succeeded";
+    payment.succeededAt = new Date();
+    payment.nuveiTransactionId = transactionId;
+    
+    // Update with any additional data from Nuvei
+    if (data.amount) {
+      payment.amount = Math.round(parseFloat(data.amount) * 100); // Convert to cents
+    }
+    if (data.currency) {
+      payment.currency = data.currency.toLowerCase();
+    }
+    
+    await payment.save();
+
+    console.log(`✅ Nuvei payment succeeded for transaction: ${transactionId}`);
+  } catch (error) {
+    console.error(`❌ Error handling Nuvei payment success: ${error.message}`);
+  }
+};
+
+// Handler for Nuvei payment failed event
+const handleNuveiPaymentFailed = async (data, transactionId) => {
+  try {
+    // Find payment by Nuvei transaction ID or session ID
+    const payment = await Payment.findOne({
+      $or: [
+        { nuveiTransactionId: transactionId },
+        { nuveiSessionId: data.sessionId || data.session_id }
+      ]
+    });
+
+    if (!payment) {
+      console.error(`❌ Payment not found for failed Nuvei transaction: ${transactionId}`);
+      return;
+    }
+
+    // Update payment status
+    payment.status = "failed";
+    if (data.failureReason || data.error) {
+      payment.description = `${payment.description || ''} - Failed: ${data.failureReason || data.error}`;
+    }
+    
+    await payment.save();
+
+    console.log(`❌ Nuvei payment failed for transaction: ${transactionId}`);
+  } catch (error) {
+    console.error(`❌ Error handling Nuvei payment failure: ${error.message}`);
+  }
+};
+
+// Handler for Nuvei refund completed event
+const handleNuveiRefundCompleted = async (data, transactionId) => {
+  try {
+    // Find payment by Nuvei transaction ID
+    const payment = await Payment.findOne({
+      nuveiTransactionId: data.originalTransactionId || data.parentTransactionId
+    });
+
+    if (!payment) {
+      console.error(`❌ Original payment not found for Nuvei refund: ${transactionId}`);
+      return;
+    }
+
+    // Update payment status to refunded
+    payment.status = "refunded";
+    payment.stripeRefundId = transactionId; // Using existing field for refund ID
+    
+    await payment.save();
+
+    // Find the associated contract and update its status
+    if (payment.contract) {
+      const contract = await Contract.findById(payment.contract);
+      if (contract) {
+        contract.status = "cancelled";
+        await contract.save();
+        console.log(`✅ Contract status updated to cancelled for refund: ${transactionId}`);
+      }
+    }
+
+    console.log(`✅ Nuvei refund completed for transaction: ${transactionId}`);
+  } catch (error) {
+    console.error(`❌ Error handling Nuvei refund: ${error.message}`);
+  }
+};
