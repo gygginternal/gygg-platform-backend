@@ -3,11 +3,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Create Redis client with configuration from environment
+// Create Valkey client with configuration from environment (using Redis client - Valkey is API compatible)
 const redisClient = redis.createClient({
   socket: {
-    host: process.env.REDIS_HOST,
-    port: parseInt(process.env.REDIS_PORT) || 6379,
+    host: process.env.VALKEY_HOST || process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.VALKEY_PORT || process.env.REDIS_PORT) || 6379,
+    connectTimeout: 30000, // 30 seconds
+    commandTimeout: 20000, // 20 seconds
   },
 });
 
@@ -20,9 +22,11 @@ redisClient.on('error', (err) => {
 });
 
 try {
-  console.log('Attempting to connect to Redis...');
-  console.log('Redis Host:', process.env.REDIS_HOST);
-  console.log('Redis Port:', process.env.REDIS_PORT);
+  console.log('Attempting to connect to Valkey (using Redis client - Valkey is API compatible)...');
+  console.log('Valkey Host:', process.env.VALKEY_HOST);
+  console.log('Redis Host:', process.env.REDIS_HOST); // For backward compatibility
+  console.log('Valkey Port:', process.env.VALKEY_PORT);
+  console.log('Redis Port:', process.env.REDIS_PORT); // For backward compatibility
   
   await redisClient.connect();
   

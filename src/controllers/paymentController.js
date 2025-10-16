@@ -2415,3 +2415,87 @@ const handleNuveiRefundCompleted = async (data, transactionId) => {
     console.error(`❌ Error handling Nuvei refund: ${error.message}`);
   }
 };
+
+// Nuvei Demo Response Handler (handles the response from demo_process_request)
+export const nuveiDemoResponse = catchAsync(async (req, res, next) => {
+  console.log('Nuvei Demo Response received:', req.body);
+  
+  // Extract response parameters from Nuvei
+  const {
+    pp_resp_hash,
+    pp_resp_code,
+    pp_resp_status,
+    pp_resp_msg,
+    transaction_id,
+    session_token,
+    amount,
+    currency,
+    ...additionalData
+  } = req.body;
+
+  // Respond with a simple success page
+  res.status(200).send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Nuvei Payment Response</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; }
+            .success { color: green; }
+            .error { color: red; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Nuvei Payment Response</h1>
+            <p>Payment Response Received</p>
+            <p><strong>Transaction ID:</strong> ${transaction_id || 'N/A'}</p>
+            <p><strong>Session Token:</strong> ${session_token || 'N/A'}</p>
+            <p><strong>Amount:</strong> ${amount || 'N/A'} ${currency || 'N/A'}</p>
+            <p><strong>Status:</strong> ${pp_resp_status || 'N/A'}</p>
+            <p><strong>Message:</strong> ${pp_resp_msg || 'N/A'}</p>
+            
+            <form method="post" action="/api/v1/payments/nuvei/confirm-payment">
+                <input type="hidden" name="sessionId" value="${session_token || ''}">
+                <input type="hidden" name="nuveiTransactionId" value="${transaction_id || ''}">
+                <button type="submit">Confirm Payment in System</button>
+            </form>
+        </div>
+    </body>
+    </html>
+  `);
+});
+
+// Nuvei Default Cancel Handler (handles payment cancellations)
+export const nuveiDefaultCancel = catchAsync(async (req, res, next) => {
+  console.log('Nuvei Payment Cancelled:', req.body);
+  
+  // Log the cancellation
+  const transactionId = req.body.transaction_id || req.body.session_token || 'Unknown';
+  
+  // You could update the payment status to 'cancelled' here if needed
+  
+  // Respond with a cancellation page
+  res.status(200).send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Cancelled</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Payment Cancelled</h1>
+            <p>Your payment has been cancelled.</p>
+            <p><strong>Transaction ID:</strong> ${transactionId}</p>
+            <p>If this was a mistake, please try the payment again.</p>
+            <a href="/">Return to Home</a>
+        </div>
+    </body>
+    </html>
+  `);
+});

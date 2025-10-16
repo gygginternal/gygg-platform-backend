@@ -23,10 +23,19 @@ import {
   getNuveiPaymentSession,
   confirmNuveiPayment,
   handleNuveiWebhook,
+  nuveiDemoResponse,
+  nuveiDefaultCancel,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
 const router = express.Router();
+
+// Routes for Nuvei demo response and cancel endpoints (for testing)
+// These need to be accessible without authentication since they're callbacks from Nuvei
+router.post("/nuvei/demo-response", nuveiDemoResponse);
+router.get("/nuvei/demo-response", nuveiDemoResponse); // Also support GET requests
+router.post("/nuvei/default-cancel", nuveiDefaultCancel);
+router.get("/nuvei/default-cancel", nuveiDefaultCancel);
 
 /**
  * --- Protect Routes ---

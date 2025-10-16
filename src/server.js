@@ -27,12 +27,12 @@ process.on("uncaughtException", (err) => {
 
 // --- Connect to MongoDB and start token cleanup job after connection ---
 connectDB().then(async () => {
-  // Connect to Redis
+  // Connect to Valkey
   try {
     await redisClient.connect();
-    logger.info('✅ Redis client connected');
-  } catch (redisError) {
-    logger.error('❌ Failed to connect to Redis:', redisError);
+    logger.info('✅ Valkey client connected');
+  } catch (valkeyError) {
+    logger.error('❌ Failed to connect to Valkey:', valkeyError);
   }
   
   // Start token cleanup job only after database connection is established
@@ -80,10 +80,10 @@ process.on("unhandledRejection", (err) => {
       await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
       
-      // Close Redis connection
+      // Close Valkey connection
       if (redisClient) {
         await redisClient.quit();
-        logger.info(".Redis connection closed.");
+        logger.info("✅ Valkey connection closed.");
       }
     } catch (closeError) {
       logger.error("Error closing connections:", closeError);
@@ -109,10 +109,10 @@ process.on("SIGTERM", () => {
       await mongoose.connection.close(false);
       logger.info("📉 MongoDB connection closed.");
       
-      // Close Redis connection
+      // Close Valkey connection
       if (redisClient) {
         await redisClient.quit();
-        logger.info(".Redis connection closed.");
+        logger.info("✅ Valkey connection closed.");
       }
     } catch (closeError) {
       logger.error("Error closing connections:", closeError);

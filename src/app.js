@@ -34,6 +34,9 @@ import { startTokenCleanupJob } from "./utils/tokenCleanup.js";
 // --- App Initialization ---
 const app = express();
 
+// Trust proxy when running behind reverse proxy like Ngrok
+app.set('trust proxy', 1);
+
 // Add timeout protection middleware to prevent slowloris and similar attacks
 app.use((req, res, next) => {
   // Set request timeout to prevent hanging connections
