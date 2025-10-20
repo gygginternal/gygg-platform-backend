@@ -1,10 +1,10 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
 import mongoose from 'mongoose';
 import Payment from '../../src/models/Payment.js';
 import Contract from '../../src/models/Contract.js';
 import User from '../../src/models/User.js';
 import { createPaymentIntentForContract } from '../../src/controllers/paymentController.js';
+import { setupTestDB, cleanupTestDB } from '../setup.js';
 
 describe('Payment Flow Integration Tests', () => {
   let sandbox;
@@ -84,12 +84,12 @@ describe('Payment Flow Integration Tests', () => {
       await payment.save();
 
       // Verify fee calculations
-      expect(payment.amount).to.equal(10000); // $100.00 service amount
-      expect(payment.applicationFeeAmount).to.equal(1500); // $15.00 platform fee (10% + $5)
-      expect(payment.providerTaxAmount).to.equal(1495); // $14.95 tax (13% of $115)
-      expect(payment.totalProviderPayment).to.equal(12995); // $129.95 total
-      expect(payment.amountReceivedByPayee).to.equal(10000); // $100.00 to tasker
-      expect(payment.taskerTaxAmount).to.equal(0); // No tax for tasker
+      expect(payment.amount).toBe(10000); // $100.00 service amount
+      expect(payment.applicationFeeAmount).toBe(1500); // $15.00 platform fee (10% + $5)
+      expect(payment.providerTaxAmount).toBe(1495); // $14.95 tax (13% of $115)
+      expect(payment.totalProviderPayment).toBe(12995); // $129.95 total
+      expect(payment.amountReceivedByPayee).toBe(10000); // $100.00 to tasker
+      expect(payment.taskerTaxAmount).toBe(0); // No tax for tasker
 
       console.log('\n💰 Payment Breakdown Verification:');
       console.log(`   Service Amount: $${(payment.amount / 100).toFixed(2)}`);
@@ -117,7 +117,7 @@ describe('Payment Flow Integration Tests', () => {
 
       // The Stripe PaymentIntent should be created with totalProviderPayment amount
       const expectedStripeAmount = payment.totalProviderPayment;
-      expect(expectedStripeAmount).to.equal(12995); // $129.95 for $100 service
+      expect(expectedStripeAmount).toBe(12995); // $129.95 for $100 service
       
       console.log('\n🔗 Stripe Integration Verification:');
       console.log(`   Stripe PaymentIntent Amount: $${(expectedStripeAmount / 100).toFixed(2)}`);
@@ -167,10 +167,10 @@ describe('Payment Flow Integration Tests', () => {
 
         await payment.save();
 
-        expect(payment.applicationFeeAmount).to.equal(scenario.expectedPlatformFee);
-        expect(payment.providerTaxAmount).to.equal(scenario.expectedTax);
-        expect(payment.totalProviderPayment).to.equal(scenario.expectedTotal);
-        expect(payment.amountReceivedByPayee).to.equal(scenario.expectedTaskerReceives);
+        expect(payment.applicationFeeAmount).toBe(scenario.expectedPlatformFee);
+        expect(payment.providerTaxAmount).toBe(scenario.expectedTax);
+        expect(payment.totalProviderPayment).toBe(scenario.expectedTotal);
+        expect(payment.amountReceivedByPayee).toBe(scenario.expectedTaskerReceives);
 
         console.log(`\n📊 ${scenario.description} Breakdown:`);
         console.log(`   Platform Fee: $${(payment.applicationFeeAmount / 100).toFixed(2)}`);
@@ -198,14 +198,14 @@ describe('Payment Flow Integration Tests', () => {
       await payment.save();
 
       // Key business rule: Tasker receives full service amount
-      expect(payment.amountReceivedByPayee).to.equal(serviceAmount);
+      expect(payment.amountReceivedByPayee).toBe(serviceAmount);
       
       // Platform fee is additional cost to provider
-      expect(payment.applicationFeeAmount).to.be.greaterThan(0);
+      expect(payment.applicationFeeAmount).toBeGreaterThan(0);
       
       // Total provider payment includes service + fee + tax
       const expectedTotal = serviceAmount + payment.applicationFeeAmount + payment.providerTaxAmount;
-      expect(payment.totalProviderPayment).to.equal(expectedTotal);
+      expect(payment.totalProviderPayment).toBe(expectedTotal);
 
       console.log('\n🎯 Business Rule Validation:');
       console.log(`   ✅ Tasker receives full service amount: $${(payment.amountReceivedByPayee / 100).toFixed(2)}`);
@@ -230,7 +230,7 @@ describe('Payment Flow Integration Tests', () => {
         await payment.save();
 
         const expectedFee = Math.round(amount * 0.10) + 500; // 10% + $5
-        expect(payment.applicationFeeAmount).to.equal(expectedFee);
+        expect(payment.applicationFeeAmount).toBe(expectedFee);
         
         console.log(`   $${(amount / 100).toFixed(2)} service → $${(expectedFee / 100).toFixed(2)} platform fee ✅`);
       }
@@ -254,7 +254,7 @@ describe('Payment Flow Integration Tests', () => {
       const taxableAmount = serviceAmount + payment.applicationFeeAmount;
       const expectedTax = Math.round(taxableAmount * 0.13);
       
-      expect(payment.providerTaxAmount).to.equal(expectedTax);
+      expect(payment.providerTaxAmount).toBe(expectedTax);
       
       console.log('\n🧮 Tax Calculation Validation:');
       console.log(`   Taxable Amount: $${(taxableAmount / 100).toFixed(2)} (service + platform fee)`);

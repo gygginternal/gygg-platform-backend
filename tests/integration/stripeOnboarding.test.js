@@ -1,8 +1,8 @@
 import request from 'supertest';
-import app from '../src/app.js';
-import User from '../src/models/User.js';
+import app from '../../src/app.js';
+import User from '../../src/models/User.js';
 import mongoose from 'mongoose';
-import stripe from '../src/config/stripe.js'; // Assuming you have a stripe config
+import { stripe } from '../../src/controllers/paymentController.js';
 
 // Mock Stripe
 jest.mock('stripe');

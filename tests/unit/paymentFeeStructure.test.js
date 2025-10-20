@@ -1,9 +1,8 @@
 import mongoose from 'mongoose';
-import Payment from '../src/models/Payment.js';
-import { createPaymentIntentForContract } from '../src/controllers/paymentController.js';
-import { setupTestDB, cleanupTestDB } from './setup.js';
+import Payment from '../../src/models/Payment.js';
+import { setupTestDB, cleanupTestDB } from '../setup.js';
 
-describe('Payment Fee Structure Tests', () => {
+describe('Payment Fee Structure Unit Tests', () => {
   // Test environment variables
   const originalEnv = process.env;
   
@@ -31,7 +30,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -64,7 +65,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -95,7 +98,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -121,7 +126,9 @@ describe('Payment Fee Structure Tests', () => {
         payee: new mongoose.Types.ObjectId(),
         amount: 10000, // $100.00
         currency: 'cad',
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'withdrawal'
       });
 
@@ -170,6 +177,8 @@ describe('Payment Fee Structure Tests', () => {
           currency: 'cad',
           contract: new mongoose.Types.ObjectId(),
           gig: new mongoose.Types.ObjectId(),
+          contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
           stripeConnectedAccountId: 'acct_test123',
           type: 'payment'
         });
@@ -177,13 +186,13 @@ describe('Payment Fee Structure Tests', () => {
         await payment.save();
         
         expect(payment.applicationFeeAmount).toBe(expectedPlatformFee, 
-          `Platform fee should be ${(expectedPlatformFee / 100).toFixed(2)}`);
+          `Platform fee should be $${(expectedPlatformFee / 100).toFixed(2)}`);
         expect(payment.providerTaxAmount).toBe(expectedProviderTax, 
-          `Provider tax should be ${(expectedProviderTax / 100).toFixed(2)}`);
+          `Provider tax should be $${(expectedProviderTax / 100).toFixed(2)}`);
         expect(payment.totalProviderPayment).toBe(expectedTotal, 
-          `Total provider payment should be ${(expectedTotal / 100).toFixed(2)}`);
+          `Total provider payment should be $${(expectedTotal / 100).toFixed(2)}`);
         expect(payment.amountReceivedByPayee).toBe(expectedTaskerReceives, 
-          `Tasker should receive ${(expectedTaskerReceives / 100).toFixed(2)}`);
+          `Tasker should receive $${(expectedTaskerReceives / 100).toFixed(2)}`);
       });
     });
   });
@@ -207,7 +216,7 @@ describe('Payment Fee Structure Tests', () => {
         await payment.save();
         
         expect(payment.amountReceivedByPayee).toBe(amount, 
-          `Tasker should receive full amount of ${(amount / 100).toFixed(2)}`);
+          `Tasker should receive full amount of $${(amount / 100).toFixed(2)}`);
       }
     });
 
@@ -230,7 +239,7 @@ describe('Payment Fee Structure Tests', () => {
         
         const expectedFee = Math.round(amount * 0.10) + 500; // 10% + $5
         expect(payment.applicationFeeAmount).toBe(expectedFee, 
-          `Platform fee should be 10% + $5 for amount ${(amount / 100).toFixed(2)}`);
+          `Platform fee should be 10% + $5 for amount $${(amount / 100).toFixed(2)}`);
       }
     });
 
@@ -244,7 +253,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -265,7 +276,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -287,7 +300,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -306,7 +321,9 @@ describe('Payment Fee Structure Tests', () => {
         currency: 'cad',
         contract: new mongoose.Types.ObjectId(),
         gig: new mongoose.Types.ObjectId(),
-        stripeConnectedAccountId: 'acct_test123',
+        contract: new mongoose.Types.ObjectId(),
+          gig: new mongoose.Types.ObjectId(),
+          stripeConnectedAccountId: 'acct_test123',
         type: 'payment'
       });
 
@@ -318,40 +335,3 @@ describe('Payment Fee Structure Tests', () => {
     });
   });
 });
-
-// Integration test helper function
-export function validateFeeStructure(serviceAmountCents) {
-  const fixedFeeCents = 500; // $5.00
-  const feePercentage = 0.10; // 10%
-  const taxPercent = 0.13; // 13%
-  
-  const platformFee = Math.round(serviceAmountCents * feePercentage) + fixedFeeCents;
-  const providerTax = Math.round((serviceAmountCents + platformFee) * taxPercent);
-  const totalProviderPayment = serviceAmountCents + platformFee + providerTax;
-  const taskerReceives = serviceAmountCents;
-  
-  return {
-    serviceAmount: serviceAmountCents,
-    platformFee,
-    providerTax,
-    totalProviderPayment,
-    taskerReceives,
-    // Formatted for display
-    formatted: {
-      serviceAmount: `$${(serviceAmountCents / 100).toFixed(2)}`,
-      platformFee: `$${(platformFee / 100).toFixed(2)}`,
-      providerTax: `$${(providerTax / 100).toFixed(2)}`,
-      totalProviderPayment: `$${(totalProviderPayment / 100).toFixed(2)}`,
-      taskerReceives: `$${(taskerReceives / 100).toFixed(2)}`
-    }
-  };
-}
-
-// Export test examples for documentation
-export const feeExamples = [
-  validateFeeStructure(5000),   // $50
-  validateFeeStructure(10000),  // $100
-  validateFeeStructure(15000),  // $150
-  validateFeeStructure(20000),  // $200
-  validateFeeStructure(25000),  // $250
-];

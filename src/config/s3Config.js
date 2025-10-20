@@ -66,7 +66,11 @@ const s3Storage = multerS3({
 const uploadS3 = multer({
     storage: s3Storage,
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10 MB limit (match frontend if possible)
+        fileSize: 10 * 1024 * 1024, // 10 MB per file (match frontend if possible)
+        files: 1, // Only allow 1 file per request
+        fieldSize: 5 * 1024 * 1024, // 5MB for other form fields combined
+        parts: 50, // Maximum number of parts (fields + files) - increased from 10
+        fields: 20 // Maximum number of non-file fields
     },
     fileFilter: (req, file, cb) => {
         // Accept only image files (adjust mimetypes as needed)

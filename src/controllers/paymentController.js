@@ -14,6 +14,13 @@ import { generateInvoicePdf } from '../utils/invoicePdfWithLogo.js';
 import https from 'https';
 import { URL } from 'url';
 
+// Import Nuvei Payment Service
+import nuveiPaymentService from '../services/payment/NuveiPaymentService.js';
+import nuveiPayoutService from '../services/payment/NuveiPayoutService.js';
+
+// Import Stripe Payment Service
+import stripePaymentService from '../services/payment/StripePaymentService.js';
+
 // Initialize Stripe with the secret key from environment variables
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });
 
@@ -228,32 +235,11 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
     );
 
   try {
-    // Capture the payment intent
-    const paymentIntent = await stripe.paymentIntents.capture(
-      payment.stripePaymentIntentId
-    );
-
-    // Update payment status
-    payment.status = "succeeded";
-    payment.succeededAt = new Date();
-    await payment.save();
-
-    // Update contract status if needed
-    if (contract.status === "active") {
-      contract.status = "completed";
-      await contract.save();
-    }
-
-    // Update contract with payment breakdown
-    contract.taxAmount = payment.taxAmount;
-    contract.platformFeeAmount = payment.applicationFeeAmount;
-    contract.payoutToTasker = payment.amountReceivedByPayee;
-    await contract.save();
-
+    const result = await stripePaymentService.releasePaymentForContract(contractId, providerId);
+    
     res.status(200).json({
       status: "success",
-      message: "Payment released successfully",
-      paymentIntent,
+      ...result
     });
   } catch (error) {
     console.error("Error releasing payment:", error);
@@ -267,170 +253,22 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
 });
 
 // --- Create Payment Intent for Contract (Provider -> Tasker via Platform) ---
-export const createPaymentIntentForContract = catchAsync(
-  async (req, res, next) => {
-    const { contractId } = req.params;
-    const providerId = req.user.id;
+export const createPaymentIntentForContract = catchAsync(async (req, res, next) => {
+  const { contractId } = req.params;
+  const providerId = req.user.id;
 
-    // Check if the contractId is valid
-    if (!mongoose.Types.ObjectId.isValid(contractId))
-      return next(new AppError("Invalid Contract ID format.", 400));
-
-    // Fetch the contract along with the tasker details
-    const contract = await Contract.findById(contractId);
-
-    if (!contract) return next(new AppError("Contract not found.", 404));
-
-    // Check if the provider is authorized to make the payment
-    if (contract.provider._id.toString() !== providerId)
-      return next(
-        new AppError("Not authorized to pay for this contract.", 403)
-      );
-
-    // Ensure that the provider has connected their Stripe account
-    const provider = await User.findById(providerId);
-    if (!provider.stripeAccountId)
-      return next(new AppError("Provider must connect their Stripe account before making payments.", 400));
-
-    // Ensure that the contract is in a valid status for payment
-    if (!["active", "submitted", "failed"].includes(contract.status)) {
-      return next(
-        new AppError(
-          `Contract not awaiting payment (status: ${contract.status}).`,
-          400
-        )
-      );
-    }
-
-    // Ensure that the tasker has connected a valid Stripe account
-    if (!contract.tasker?.stripeAccountId)
-      return next(new AppError("Tasker has not connected Stripe.", 400));
-
-    const taskerStripeAccountId = contract.tasker.stripeAccountId;
-
-    // Validate that the Stripe account actually exists
-    try {
-      await stripe.accounts.retrieve(taskerStripeAccountId);
-    } catch (error) {
-      if (error.code === 'account_invalid' || error.type === 'StripePermissionError') {
-        // Clear the invalid account ID from the user
-        await User.findByIdAndUpdate(contract.tasker._id, {
-          $unset: { stripeAccountId: 1, stripeChargesEnabled: 1, stripePayoutsEnabled: 1 }
-        });
-        return next(new AppError("Tasker's Stripe account is invalid. Please reconnect Stripe account.", 400));
-      }
-      throw error; // Re-throw other errors
-    }
-    // Calculate payment amount based on contract type
-    let serviceAmountInCents;
-    let paymentDescription;
-
-    if (contract.isHourly) {
-      // For hourly contracts, use actual hours worked
-      if (!contract.actualHours || contract.actualHours <= 0) {
-        return next(new AppError("No approved hours found for this hourly contract. Please ensure time entries are approved before payment.", 400));
-      }
-      serviceAmountInCents = Math.round(contract.totalHourlyPayment * 100);
-      paymentDescription = `Payment for ${contract.actualHours} hours at $${contract.hourlyRate}/hr`;
-    } else {
-      // For fixed contracts, use agreed cost
-      serviceAmountInCents = Math.round(contract.agreedCost * 100);
-      paymentDescription = `Payment for fixed-price gig`;
-    }
-
-    if (serviceAmountInCents <= 0) {
-      return next(new AppError("Invalid payment amount calculated.", 400));
-    }
-
-    // --- Stripe Tax Integration ---
-    // 1. Ensure provider has a Stripe customer with address info
-    let stripeCustomerId = provider.stripeCustomerId;
-    if (!stripeCustomerId) {
-      // Create a Stripe customer for the provider if not exists
-      const customer = await stripe.customers.create({
-        email: provider.email,
-        name: `${provider.firstName} ${provider.lastName}`,
-        address: provider.address ? {
-          line1: provider.address.street,
-          city: provider.address.city,
-          state: provider.address.state,
-          postal_code: provider.address.postalCode,
-          country: provider.address.country,
-        } : undefined,
-      });
-      stripeCustomerId = customer.id;
-      provider.stripeCustomerId = customer.id;
-      await provider.save();
-    }
-
-    // 2. Remove manual tax calculation (Stripe Tax will handle it)
-    // const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13;
-    // const taxAmount = Math.round(amountInCents * taxPercent);
-    // const amountAfterTax = amountInCents - taxAmount;
-
-    // 3. Create/update payment record (this will trigger the pre-save hook to calculate amounts)
-    let payment = await Payment.findOne({ contract: contractId });
-    if (!payment) {
-      payment = await Payment.create({
-        contract: contractId,
-        gig: contract.gig,
-        payer: providerId,
-        payee: contract.tasker._id,
-        amount: serviceAmountInCents, // Base service amount
-        currency: 'cad',
-        description: paymentDescription,
-        status: "requires_payment_method",
-        stripeConnectedAccountId: taskerStripeAccountId,
-      });
-    } else if (!["requires_payment_method", "failed"].includes(payment.status)) {
-      return next(new AppError(`Payment already in status: ${payment.status}`, 400));
-    } else {
-      payment.amount = serviceAmountInCents;
-      payment.status = "requires_payment_method";
-      await payment.save();
-    }
-
-    // Get the total amount provider needs to pay (after pre-save hook calculations)
-    const totalProviderPaymentAmount = payment.totalProviderPayment || payment.amount;
-
-    // 5. Create PaymentIntent with Stripe Connect parameters
-    const paymentIntentParams = {
-      amount: totalProviderPaymentAmount,
-      currency: payment.currency,
-      // capture_method: "manual", // Disabled for testing - using automatic capture
-      customer: stripeCustomerId,
-      payment_method_types: ['card'], // Explicitly specify payment methods instead of automatic
-      // Stripe Connect parameters - properly configured for platform fees
-      application_fee_amount: payment.applicationFeeAmount + payment.providerTaxAmount,
-      transfer_data: { destination: taskerStripeAccountId },
-      // automatic_payment_methods: { enabled: true }, // Disabled - not supported in current API version
-      automatic_tax: { enabled: true }, // Enable Stripe automatic tax calculation
-      metadata: {
-        paymentId: payment._id.toString(),
-        contractId: contractId.toString(),
-        providerId: providerId.toString(),
-        taskerId: contract.tasker._id.toString(),
-      },
-    };
-
-    // For development/testing, always create a new PaymentIntent to avoid conflicts
-    // In production, you might want to reuse PaymentIntents for better UX
-    const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
-    payment.stripePaymentIntentId = paymentIntent.id;
-    payment.stripePaymentIntentSecret = paymentIntent.client_secret;
-
-    payment.status = "requires_payment_method";
-    await payment.save();
-
-    // Contract breakdown will be updated after payment confirmation (webhook)
-
+  try {
+    const result = await stripePaymentService.createPaymentIntentForContract(contractId, providerId);
+    
     res.status(200).json({
       status: "success",
-      clientSecret: paymentIntent.client_secret,
-      paymentId: payment._id,
+      ...result
     });
+  } catch (error) {
+    console.error('Error creating Stripe payment intent:', error);
+    return next(new AppError(`Failed to create payment intent: ${error.message}`, 500));
   }
-);
+});
 
 const handlePayoutPaid = async (dataObject) => {
   try {
@@ -1421,7 +1259,7 @@ export const getPaymentHistory = catchAsync(async (req, res, next) => {
 
 // --- Process Withdrawal Request ---
 export const processWithdrawal = catchAsync(async (req, res, next) => {
-  const { amount } = req.body;
+  const { amount, paymentMethod = 'stripe' } = req.body; // Added paymentMethod parameter
   const userId = req.user.id;
 
   // Validate amount
@@ -1429,126 +1267,139 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     return next(new AppError("Valid withdrawal amount is required.", 400));
   }
 
-  // Get user with Stripe account ID
-  const user = await User.findById(userId).select("+stripeAccountId");
-  if (!user || !user.stripeAccountId) {
-    return next(new AppError("Stripe account not connected. Please complete onboarding first.", 400));
+  if (!['stripe', 'nuvei'].includes(paymentMethod)) {
+    return next(new AppError("Invalid payment method. Use 'stripe' or 'nuvei'.", 400));
   }
 
-  let availableAmount = 0; // Move this outside the try block
-  const requestedAmount = Math.round(amount * 100); // Convert to cents
-
   try {
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-      // In development mode, calculate balance from our payment records
-      
-      // Get all payments received by this user
-      const paymentsReceived = await Payment.find({
-        payee: userId,
-        status: 'succeeded',
-        type: 'payment'
-      });
+    let result;
+    
+    if (paymentMethod === 'stripe') {
+      // Process withdrawal via Stripe (using new service)
+      // Process withdrawal via Stripe (using new service)
+      result = await stripePaymentService.processWithdrawal(userId, amount);
+    } else if (paymentMethod === 'nuvei') {
 
-      // Get all withdrawals made by this user
-      const withdrawals = await Payment.find({
-        payer: userId,
-        status: { $in: ['paid', 'succeeded'] },
-        type: 'withdrawal'
-      });
+      let availableAmount = 0;
+      const requestedAmount = Math.round(amount * 100); // Convert to cents
 
-      // Calculate available balance
-      const totalReceived = paymentsReceived.reduce((sum, payment) => {
-        return sum + (payment.amountReceivedByPayee || 0);
-      }, 0);
+      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+        // In development mode, calculate balance from our Stripe payment records
+        const paymentsReceived = await Payment.find({
+          payee: userId,
+          status: 'succeeded',
+          type: 'payment'
+        });
 
-      const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
-        return sum + (withdrawal.amount || 0);
-      }, 0);
+        const withdrawals = await Payment.find({
+          payer: userId,
+          status: { $in: ['paid', 'succeeded'] },
+          type: 'withdrawal'
+        });
 
-      availableAmount = totalReceived - totalWithdrawn;
+        const totalReceived = paymentsReceived.reduce((sum, payment) => {
+          return sum + (payment.amountReceivedByPayee || 0);
+        }, 0);
 
-      console.log(`[DEV MODE] Withdrawal check for user ${userId}:
-        - Total received: $${(totalReceived / 100).toFixed(2)}
-        - Total withdrawn: $${(totalWithdrawn / 100).toFixed(2)}
-        - Available: $${(availableAmount / 100).toFixed(2)}
-        - Requested: $${amount}`);
+        const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
+          return sum + (withdrawal.amount || 0);
+        }, 0);
 
-    } else {
-      // In production mode, get real balance from Stripe
-      const balance = await stripe.balance.retrieve({
-        stripeAccount: user.stripeAccountId,
-      });
+        availableAmount = totalReceived - totalWithdrawn;
 
-      const available = balance.available.find(b => b.currency === 'usd');
-      availableAmount = available ? available.amount : 0;
-    }
+        console.log(`[DEV MODE] Stripe withdrawal check for user ${userId}:
+          - Total received: ${(totalReceived / 100).toFixed(2)}
+          - Total withdrawn: ${(totalWithdrawn / 100).toFixed(2)}
+          - Available: ${(availableAmount / 100).toFixed(2)}
+          - Requested: ${amount}`);
 
-    if (requestedAmount > availableAmount) {
-      return next(new AppError(`Insufficient balance. Available: ${(availableAmount / 100).toFixed(2)}, Requested: ${amount}`, 400));
-    }
+      } else {
+        // In production mode, get real balance from Stripe
+        const balance = await stripe.balance.retrieve({
+          stripeAccount: user.stripeAccountId,
+        });
 
-    let payout;
-    let payoutId;
+        const available = balance.available.find(b => b.currency === 'usd');
+        availableAmount = available ? available.amount : 0;
+      }
 
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-      // Simulate payout in development mode
-      payoutId = `po_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      payout = {
-        id: payoutId,
-        status: 'paid',
-        arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours from now
-      };
-      
-      console.log(`[DEV MODE] Simulated withdrawal:
-        - Payout ID: ${payoutId}
-        - Amount: $${amount}
-        - Status: simulated_paid`);
+      if (requestedAmount > availableAmount) {
+        return next(new AppError(`Insufficient Stripe balance. Available: ${(availableAmount / 100).toFixed(2)}, Requested: ${amount}`, 400));
+      }
 
-    } else {
-      // Create real payout in production
-      payout = await stripe.payouts.create({
+      let payout;
+      let payoutId;
+
+      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+        // Simulate payout in development mode
+        payoutId = `po_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        payout = {
+          id: payoutId,
+          status: 'paid',
+          arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours from now
+        };
+        
+        console.log(`[DEV MODE] Simulated Stripe withdrawal:
+          - Payout ID: ${payoutId}
+          - Amount: ${amount}
+          - Status: simulated_paid`);
+
+      } else {
+        // Create real payout in production
+        payout = await stripe.payouts.create({
+          amount: requestedAmount,
+          currency: 'usd',
+          method: 'instant',
+        }, {
+          stripeAccount: user.stripeAccountId,
+        });
+        payoutId = payout.id;
+      }
+
+      // Log the withdrawal for tracking
+      logger.info(`Stripe withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payoutId})`);
+
+      // Create a withdrawal record in the database
+      const withdrawalData = {
+        payer: userId, // User withdrawing
+        payee: userId, // User receiving
         amount: requestedAmount,
         currency: 'usd',
-        method: 'instant',
-      }, {
-        stripeAccount: user.stripeAccountId,
-      });
-      payoutId = payout.id;
+        status: payout.status,
+        stripePayoutId: payoutId,
+        description: `Withdrawal to bank account via Stripe`,
+        type: 'withdrawal',
+        stripeConnectedAccountId: user.stripeAccountId,
+        amountReceivedByPayee: requestedAmount,
+        amountAfterTax: requestedAmount,
+        applicationFeeAmount: 0,
+        taxAmount: 0
+      };
+      
+      // Explicitly don't set contract and gig for withdrawals to avoid unique constraint issues
+      const withdrawalRecord = new Payment(withdrawalData);
+      await withdrawalRecord.save();
+
+      result = {
+        payoutId: payout.id,
+        amount: amount,
+        status: payout.status,
+        method: 'stripe',
+        estimatedArrival: payout.arrival_date ? new Date(payout.arrival_date * 1000) : null,
+      };
+    } else if (paymentMethod === 'nuvei') {
+      // Process withdrawal via Nuvei bank transfer
+      result = await nuveiPayoutService.processNuveiWithdrawal(userId, amount);
+      
+      if (!result.success) {
+        return next(new AppError(result.error, 400));
+      }
     }
-
-    // Log the withdrawal for tracking
-    logger.info(`Withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payoutId})`);
-
-    // Create a withdrawal record in the database
-    const withdrawalData = {
-      payer: userId, // User withdrawing
-      payee: userId, // User receiving
-      amount: requestedAmount,
-      currency: 'usd',
-      status: payout.status,
-      stripePayoutId: payoutId,
-      description: `Withdrawal to bank account`,
-      type: 'withdrawal',
-      stripeConnectedAccountId: user.stripeAccountId,
-      amountReceivedByPayee: requestedAmount,
-      amountAfterTax: requestedAmount,
-      applicationFeeAmount: 0,
-      taxAmount: 0
-    };
-    
-    // Explicitly don't set contract and gig for withdrawals to avoid unique constraint issues
-    const withdrawalRecord = new Payment(withdrawalData);
-    await withdrawalRecord.save();
 
     res.status(200).json({
       status: "success",
       message: "Withdrawal request submitted successfully",
-      data: {
-        payoutId: payout.id,
-        amount: amount,
-        status: payout.status,
-        estimatedArrival: payout.arrival_date ? new Date(payout.arrival_date * 1000) : null,
-      },
+      data: result,
     });
   } catch (error) {
     console.error(`[ERROR] Withdrawal processing failed for user ${userId}:`, {
@@ -1557,13 +1408,14 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
       errorType: error.type,
       errorCode: error.code,
       requestedAmount: amount,
-      availableAmount: availableAmount / 100
+      paymentMethod
     });
     
-    logger.error(`Error processing withdrawal for user ${userId}:`, error);
+    logger.error(`Error processing ${paymentMethod} withdrawal for user ${userId}:`, error);
 
-    // Handle specific Stripe errors
-    if (error.type === 'StripeError') {
+    if (error instanceof AppError) {
+      return next(error);
+    } else if (error.type === 'StripeError') {
       switch (error.code) {
         case 'insufficient_funds':
           return next(new AppError("Insufficient funds in your Stripe account.", 400));
@@ -1577,6 +1429,132 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
     }
 
     return next(new AppError(`Failed to process withdrawal request: ${error.message}`, 500));
+  }
+});
+
+// --- Get Nuvei withdrawal history ---
+export const getNuveiWithdrawalHistory = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  const { page = 1, limit = 10 } = req.query;
+
+  try {
+    const result = await nuveiPayoutService.getUserNuveiWithdrawals(userId, parseInt(page), parseInt(limit));
+
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    logger.error('Error getting Nuvei withdrawal history:', error);
+    return next(new AppError(`Failed to get Nuvei withdrawal history: ${error.message}`, 500));
+  }
+});
+
+// --- Get available balance by payment method ---
+export const getPaymentMethodBalance = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  const { paymentMethod = 'both' } = req.query; // 'stripe', 'nuvei', or 'both'
+
+  try {
+    const balances = {};
+
+    if (paymentMethod === 'both' || paymentMethod === 'stripe') {
+      const user = await User.findById(userId).select("+stripeAccountId");
+      if (user && user.stripeAccountId) {
+        if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+          // In development, calculate from records
+          const paymentsReceived = await Payment.find({
+            payee: userId,
+            status: 'succeeded',
+            type: 'payment'
+          });
+
+          const withdrawals = await Payment.find({
+            payer: userId,
+            status: { $in: ['paid', 'succeeded'] },
+            type: 'withdrawal'
+          });
+
+          const totalReceived = paymentsReceived.reduce((sum, payment) => {
+            return sum + (payment.amountReceivedByPayee || 0);
+          }, 0);
+
+          const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
+            return sum + (withdrawal.amount || 0);
+          }, 0);
+
+          const available = totalReceived - totalWithdrawn;
+
+          balances.stripe = {
+            available: available / 100,
+            availableFormatted: (available / 100).toFixed(2),
+            currency: 'USD',
+            hasAccount: true
+          };
+        } else {
+          // In production, get from Stripe API
+          const balance = await stripe.balance.retrieve({
+            stripeAccount: user.stripeAccountId,
+          });
+
+          const availableUSD = balance.available.find(b => b.currency === 'usd') || { amount: 0 };
+          const pendingUSD = balance.pending.find(b => b.currency === 'usd') || { amount: 0 };
+
+          balances.stripe = {
+            available: availableUSD.amount / 100,
+            availableFormatted: (availableUSD.amount / 100).toFixed(2),
+            pending: pendingUSD.amount / 100,
+            pendingFormatted: (pendingUSD.amount / 100).toFixed(2),
+            currency: 'USD',
+            hasAccount: true
+          };
+        }
+      } else {
+        balances.stripe = {
+          available: 0,
+          availableFormatted: '0.00',
+          pending: 0,
+          pendingFormatted: '0.00',
+          currency: 'USD',
+          hasAccount: false
+        };
+      }
+    }
+
+    if (paymentMethod === 'both' || paymentMethod === 'nuvei') {
+      const user = await User.findById(userId);
+      if (user && user.nuveiBankTransferEnabled) {
+        const available = await nuveiPayoutService.getNuveiAvailableBalance(userId);
+        
+        balances.nuvei = {
+          available: available / 100,
+          availableFormatted: (available / 100).toFixed(2),
+          currency: 'CAD',
+          hasAccount: user.nuveiBankTransferEnabled,
+          hasBankDetails: !!(user.nuveiBankDetails && user.nuveiBankDetails.accountNumber)
+        };
+      } else {
+        balances.nuvei = {
+          available: 0,
+          availableFormatted: '0.00',
+          currency: 'CAD',
+          hasAccount: false,
+          hasBankDetails: false
+        };
+      }
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        balances,
+        paymentMethod,
+        userId
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting payment method balance:', error);
+    return next(new AppError(`Failed to get balance: ${error.message}`, 500));
   }
 });
 
@@ -1987,212 +1965,43 @@ const makeNuveiRequest = async (endpoint, data, method = 'POST') => {
 export const createNuveiPaymentSession = catchAsync(async (req, res, next) => {
   const { contractId } = req.body; // changed from req.params for POST
   const providerId = req.user.id;
-
-  // Validate contract ID
-  if (!mongoose.Types.ObjectId.isValid(contractId))
-    return next(new AppError("Invalid Contract ID format.", 400));
-
-  // Fetch the contract along with the tasker details
-  const contract = await Contract.findById(contractId);
-  if (!contract) return next(new AppError("Contract not found.", 404));
-
-  // Check if the provider is authorized to make the payment
-  if (contract.provider._id.toString() !== providerId)
-    return next(
-      new AppError("Not authorized to pay for this contract.", 403)
-    );
-
-  // Ensure that the contract is in a valid status for payment
-  if (!["active", "submitted", "failed"].includes(contract.status)) {
-    return next(
-      new AppError(
-        `Contract not awaiting payment (status: ${contract.status}).`,
-        400
-      )
-    );
-  }
-
-  // Ensure that the tasker has connected a valid payment receiving method
-  if (!contract.tasker?.stripeAccountId)
-    return next(new AppError("Tasker has not connected payment method.", 400));
-
-  const taskerStripeAccountId = contract.tasker.stripeAccountId;
-
-  // Calculate payment amount based on contract type
-  let serviceAmountInCents;
-  let paymentDescription;
-
-  if (contract.isHourly) {
-    // For hourly contracts, use actual hours worked
-    if (!contract.actualHours || contract.actualHours <= 0) {
-      return next(new AppError("No approved hours found for this hourly contract. Please ensure time entries are approved before payment.", 400));
-    }
-    serviceAmountInCents = Math.round(contract.totalHourlyPayment * 100);
-    paymentDescription = `Payment for ${contract.actualHours} hours at ${contract.hourlyRate}/hr`;
-  } else {
-    // For fixed contracts, use agreed cost
-    serviceAmountInCents = Math.round(contract.agreedCost * 100);
-    paymentDescription = `Payment for fixed-price gig`;
-  }
-
-  if (serviceAmountInCents <= 0) {
-    return next(new AppError("Invalid payment amount calculated.", 400));
-  }
-
-  // --- Calculate payment breakdown (same as Stripe) ---
-  // Use environment variables for fee/tax configuration
-  const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
-  const feePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENT) || 0.10; // 10%
-  const taxPercent = parseFloat(process.env.TAX_PERCENT) || 0.13; // 13%
-  
-  // Service amount (this is what the tasker receives - the agreed upon amount)
-  const agreedServiceAmount = serviceAmountInCents;
-  
-  // Platform fee calculation (percentage of service amount + fixed fee)
-  // This fee goes to the platform as revenue
-  const applicationFeeAmount = Math.round(agreedServiceAmount * feePercentage) + fixedFeeCents;
-  
-  // Provider pays tax on the total amount they pay (service + platform fee)
-  const providerTaxableAmount = agreedServiceAmount + applicationFeeAmount;
-  const providerTaxAmount = Math.round(providerTaxableAmount * taxPercent);
-  
-  // Total tax amount (only provider tax in this model)
-  const taxAmount = providerTaxAmount;
-  
-  // Total amount provider pays (service amount + platform fee + tax)
-  const totalProviderPayment = agreedServiceAmount + applicationFeeAmount + providerTaxAmount;
-  
-  // Amount tasker receives (the full agreed service amount - no fees deducted)
-  const amountReceivedByPayee = agreedServiceAmount;
-
-  // Create/update payment record
-  let payment = await Payment.findOne({ contract: contractId });
-  if (!payment) {
-    payment = await Payment.create({
-      contract: contractId,
-      gig: contract.gig,
-      payer: providerId,
-      payee: contract.tasker._id,
-      amount: serviceAmountInCents, // Base service amount
-      currency: 'cad', // or based on environment
-      description: paymentDescription,
-      status: "requires_payment_method",
-      paymentProvider: "nuvei", // Specify Nuvei as payment provider
-      // Platform fee details
-      applicationFeeAmount,
-      providerTaxAmount,
-      taxAmount,
-      totalProviderPayment,
-      amountReceivedByPayee,
-    });
-  } else if (!["requires_payment_method", "failed"].includes(payment.status)) {
-    return next(new AppError(`Payment already in status: ${payment.status}`, 400));
-  } else {
-    payment.amount = serviceAmountInCents;
-    payment.status = "requires_payment_method";
-    payment.paymentProvider = "nuvei";
-    // Update fee calculations
-    payment.applicationFeeAmount = applicationFeeAmount;
-    payment.providerTaxAmount = providerTaxAmount;
-    payment.taxAmount = taxAmount;
-    payment.totalProviderPayment = totalProviderPayment;
-    payment.amountReceivedByPayee = amountReceivedByPayee;
-    await payment.save();
-  }
+  const { paymentMethod = 'card' } = req.body; // Get payment method from request, default to card
 
   try {
-    // Prepare Nuvei payment session data
-    const paymentOption = req.body.paymentMethod || 'card'; // Get payment method from request, default to card
+    const result = await nuveiPaymentService.createPaymentSession(contractId, providerId, paymentMethod);
     
-    const nuveiSessionData = {
-      merchantId: process.env.NUVEI_MERCHANT_ID,
-      merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
-      amount: totalProviderPayment / 100, // Convert from cents to dollars
-      currency: 'CAD',
-      orderId: `GYGG-${payment._id}`, // Unique order ID
-      userTokenId: providerId, // User identifier
-      transactionType: 'sale', // Could also be 'auth' for authorization
-      paymentOption: paymentOption, // Use the selected payment option
-      // Additional required fields based on Nuvei documentation
-      clientRequestId: payment._id.toString(), // Unique request ID
-      // Additional payment method specific data will be handled by Nuvei Simply Connect
-      // Do not include sensitive card data here as it should be handled securely by the SDK
-    };
-    
-    // Add InstaDebit specific fields if needed
-    if (paymentOption === 'instadebit') {
-      nuveiSessionData.apm = {
-        provider: 'instadebit',
-        // Add any InstaDebit specific parameters here
-      };
-    }
-
-    // Make request to Nuvei API to create session
-    const nuveiResponse = await makeNuveiRequest('payment/session/create', nuveiSessionData);
-    
-    // Update payment with Nuvei-specific data
-    payment.nuveiSessionId = nuveiResponse.sessionId || nuveiResponse.session_token;
-    payment.nuveiMerchantId = process.env.NUVEI_MERCHANT_ID;
-    payment.nuveiMerchantSiteId = process.env.NUVEI_MERCHANT_SITE_ID;
-    
-    await payment.save();
-
     res.status(200).json({
       status: "success",
-      data: {
-        paymentId: payment._id,
-        sessionId: payment.nuveiSessionId,
-        amount: totalProviderPayment / 100,
-        currency: 'CAD',
-        // Provide necessary data for frontend Nuvei integration
-        nuveiConfig: {
-          merchantId: process.env.NUVEI_MERCHANT_ID,
-          merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
-          sessionId: payment.nuveiSessionId,
-          environment: process.env.NODE_ENV === 'production' ? 'live' : 'sandbox',
-        }
-      },
+      data: result,
     });
   } catch (error) {
     console.error('Error creating Nuvei payment session:', error);
     return next(new AppError(`Failed to create Nuvei payment session: ${error.message}`, 500));
   }
 });
-
-// Get Nuvei payment session details
 export const getNuveiPaymentSession = catchAsync(async (req, res, next) => {
   const { sessionId } = req.params;
+  const userId = req.user.id;
 
-  // Find payment by Nuvei session ID
-  const payment = await Payment.findOne({ nuveiSessionId: sessionId })
-    .populate('contract', 'title')
-    .populate('payer', 'firstName lastName email')
-    .populate('payee', 'firstName lastName email');
-  
-  if (!payment) {
-    return next(new AppError("Nuvei payment session not found.", 404));
-  }
-
-  // Check authorization - only involved parties can access
-  if (![payment.payer._id.toString(), payment.payee._id.toString()].includes(req.user.id) && 
-      !req.user.role.includes('admin')) {
-    return next(new AppError("Not authorized to access this payment session.", 403));
-  }
-
-  res.status(200).json({
-    status: "success",
-    data: {
-      sessionId: payment.nuveiSessionId,
-      paymentId: payment._id,
-      status: payment.status,
-      amount: payment.amount / 100,
-      currency: payment.currency,
-      contract: payment.contract,
-      payer: payment.payer,
-      payee: payment.payee,
-      createdAt: payment.createdAt,
+  try {
+    // Check authorization - only involved parties can access
+    // For now, let the service handle the authorization check
+    const result = await nuveiPaymentService.getPaymentBySessionId(sessionId);
+    
+    // Additional authorization check
+    if (![result.payer._id.toString(), result.payee._id.toString()].includes(userId) && 
+        !req.user.role.includes('admin')) {
+      return next(new AppError("Not authorized to access this payment session.", 403));
     }
-  });
+
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    console.error('Error getting Nuvei payment session:', error);
+    return next(new AppError(`Failed to get Nuvei payment session: ${error.message}`, 500));
+  }
 });
 
 // Confirm Nuvei payment (called after payment completion on frontend)
@@ -2204,65 +2013,13 @@ export const confirmNuveiPayment = catchAsync(async (req, res, next) => {
   }
 
   try {
-    // Find the payment record
-    const payment = await Payment.findOne({
-      $or: [
-        { nuveiTransactionId },
-        { nuveiSessionId: sessionId }
-      ]
-    }).populate('contract');
-
-    if (!payment) {
-      return next(new AppError('Payment record not found', 404));
-    }
-
-    // Verify the payment with Nuvei
-    // In a real implementation, we would call Nuvei's API to verify the transaction
-    // For now, we'll assume the transaction is valid
-    const nuveiVerificationData = {
-      merchantId: process.env.NUVEI_MERCHANT_ID,
-      merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID,
-      transactionId: nuveiTransactionId,
-    };
-
-    let verificationResult = { status: 'success' }; // Simplified for now
+    const result = await nuveiPaymentService.confirmPayment(nuveiTransactionId, sessionId);
     
-    // For a real implementation, uncomment the next lines:
-    // const verificationResult = await makeNuveiRequest('payment/verify', nuveiVerificationData, 'GET');
-
-    if (verificationResult.status === 'success') {
-      // Update payment status and details
-      payment.status = "succeeded";
-      payment.succeededAt = new Date();
-      payment.nuveiTransactionId = nuveiTransactionId;
-      
-      await payment.save();
-
-      // Update contract status if needed
-      if (payment.contract && payment.contract.status !== "completed") {
-        payment.contract.status = "completed";
-        await payment.contract.save();
-      }
-
-      res.status(200).json({
-        status: "success",
-        message: "Nuvei payment confirmed and contract updated",
-        data: {
-          payment: {
-            id: payment._id,
-            status: payment.status,
-            amount: payment.amount,
-            transactionId: payment.nuveiTransactionId,
-          },
-          contract: {
-            id: payment.contract._id,
-            status: payment.contract.status,
-          }
-        }
-      });
-    } else {
-      return next(new AppError('Nuvei payment verification failed', 400));
-    }
+    res.status(200).json({
+      status: "success",
+      message: "Nuvei payment confirmed and contract updated",
+      data: result
+    });
   } catch (error) {
     console.error('Error confirming Nuvei payment:', error);
     return next(new AppError('Failed to confirm Nuvei payment', 500));
@@ -2498,4 +2255,84 @@ export const nuveiDefaultCancel = catchAsync(async (req, res, next) => {
     </body>
     </html>
   `);
+});
+
+// --- Nuvei Onboarding Controller Functions ---
+
+// Start Nuvei onboarding process
+export const startNuveiOnboarding = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  
+  try {
+    // Start Nuvei onboarding process through the service
+    const result = await nuveiPaymentService.startNuveiOnboarding(userId);
+    
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    console.error('Error starting Nuvei onboarding:', error);
+    return next(new AppError(`Failed to start Nuvei onboarding: ${error.message}`, 500));
+  }
+});
+
+// Check Nuvei onboarding status
+export const checkNuveiOnboardingStatus = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  
+  try {
+    // Check Nuvei onboarding status through the service
+    const result = await nuveiPaymentService.checkNuveiOnboardingStatus(userId);
+    
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    console.error('Error checking Nuvei onboarding status:', error);
+    return next(new AppError(`Failed to check Nuvei onboarding status: ${error.message}`, 500));
+  }
+});
+
+// Set default payment method
+export const setDefaultPaymentMethod = catchAsync(async (req, res, next) => {
+  const { defaultPaymentMethod } = req.body;
+  const userId = req.user.id;
+  
+  // Validate payment method
+  if (!['stripe', 'nuvei'].includes(defaultPaymentMethod)) {
+    return next(new AppError("Invalid payment method. Use 'stripe' or 'nuvei'.", 400));
+  }
+  
+  try {
+    // Set default payment method through the service
+    const result = await nuveiPaymentService.setDefaultPaymentMethod(userId, defaultPaymentMethod);
+    
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    console.error('Error setting default payment method:', error);
+    return next(new AppError(`Failed to set default payment method: ${error.message}`, 500));
+  }
+});
+
+// Get all payment methods for user
+export const getUserPaymentMethods = catchAsync(async (req, res, next) => {
+  const userId = req.user.id;
+  
+  try {
+    // Get all payment methods through the service
+    const result = await nuveiPaymentService.getUserPaymentMethods(userId);
+    
+    res.status(200).json({
+      status: "success",
+      data: result
+    });
+  } catch (error) {
+    console.error('Error getting user payment methods:', error);
+    return next(new AppError(`Failed to get payment methods: ${error.message}`, 500));
+  }
 });

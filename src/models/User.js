@@ -213,6 +213,54 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
+    // Nuvei Integration
+    nuveiAccountId: String,
+    nuveiCustomerId: String,
+    nuveiVerificationStatus: {
+      type: String,
+      enum: ['pending', 'verified', 'failed', 'not_required'],
+      default: 'not_required'
+    },
+    nuveiBankToken: String,
+    nuveiPaymentMethods: [{
+      type: String,
+      enum: ['card', 'instadebit', 'ach', 'bank_transfer']
+    }],
+    nuveiBankTransferEnabled: {
+      type: Boolean,
+      default: false
+    },
+    nuveiBankDetails: {
+      accountNumber: String,
+      institutionNumber: String,
+      transitNumber: String,
+      accountType: {
+        type: String,
+        enum: ['checking', 'savings']
+      }
+    },
+    
+    // Nuvei Withdrawal Specific Fields
+    nuveiBankTransferEnabled: {
+      type: Boolean,
+      default: false
+    },
+    nuveiBankTransferSetupCompletedAt: {
+      type: Date
+    },
+    nuveiLastWithdrawalAttempt: {
+      type: Date
+    },
+    nuveiTotalWithdrawn: {
+      type: Number,
+      default: 0
+    },
+    nuveiPreferredWithdrawalMethod: {
+      type: String,
+      enum: ['bank_transfer', 'card'],
+      default: 'bank_transfer'
+    },
+
     // Account Status
     active: {
       type: Boolean,

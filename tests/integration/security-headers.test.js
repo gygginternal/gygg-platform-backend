@@ -1,7 +1,7 @@
 import request from 'supertest';
 import mongoose from 'mongoose';
-import app from '../src/app.js';
-import User from '../src/models/User.js';
+import app from '../../src/app.js';
+import User from '../../src/models/User.js';
 
 describe('Phase 2: Request Size Limits and Security Headers Tests', () => {
   let server;

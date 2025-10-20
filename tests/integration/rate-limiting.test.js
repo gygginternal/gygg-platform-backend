@@ -1,6 +1,6 @@
 import request from 'supertest';
 import mongoose from 'mongoose';
-import app from '../src/app.js';
+import app from '../../src/app.js';
 import User from '../src/models/User.js';
 
 describe('Phase 1: Rate Limiting Tests', () => {

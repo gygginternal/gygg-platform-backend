@@ -20,6 +20,8 @@ import gigRouter from "./routes/gigRoutes.js";
 import postRouter from "./routes/postRoutes.js";
 import chatRouter from "./routes/chatRoutes.js";
 import paymentRouter from "./routes/paymentRoutes.js";
+import paymentAggregationRouter from "./routes/paymentAggregationRoutes.js"; // Import payment aggregation routes
+import dashboardRouter from "./routes/dashboardRoutes.js"; // Import dashboard routes
 import reviewRouter from "./routes/reviewRoutes.js";
 import contractRouter from "./routes/contractRoutes.js";
 import applicationRouter from "./routes/applicationRoutes.js";
@@ -45,13 +47,27 @@ app.use((req, res, next) => {
   });
   
   // Prevent large payloads through headers
-  if (req.headers['content-length']) {
-    const contentLength = parseInt(req.headers['content-length'], 10);
-    if (contentLength > 10 * 1024) { // 10KB limit
-      return res.status(413).json({
-        status: 'fail',
-        message: 'Request entity too large'
-      });
+  // Set different limits for file upload vs regular API requests
+  const contentLength = req.headers['content-length'] ? parseInt(req.headers['content-length'], 10) : 0;
+  if (contentLength > 0) {
+    // Check if this is a multipart request (file upload) - multer will handle its own limits
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('multipart/form-data')) {
+      // For multipart requests (file uploads), allow up to 15MB
+      if (contentLength > 15 * 1024 * 1024) { // 15MB limit for file uploads
+        return res.status(413).json({
+          status: 'fail',
+          message: 'Request entity too large - upload limit exceeded (15MB)'
+        });
+      }
+    } else {
+      // For regular JSON requests, allow up to 5MB (more reasonable than 10KB)
+      if (contentLength > 5 * 1024 * 1024) { // 5MB limit for JSON requests
+        return res.status(413).json({
+          status: 'fail',
+          message: 'Request entity too large - JSON request limit exceeded (5MB)'
+        });
+      }
     }
   }
   
@@ -145,11 +161,11 @@ app.use(
 );
 // Enhanced body parser with comprehensive limits and timeout protection
 app.use(express.json({ 
-  limit: '10kb',
+  limit: '5mb',
   // Add timeout protection for slowloris and similar attacks
   verify: (req, res, buf, encoding) => {
     // Check for abnormally large content lengths
-    if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 10240) {
+    if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 5 * 1024 * 1024) {
       throw new Error('Request entity too large');
     }
   }
@@ -158,7 +174,7 @@ app.use(express.json({
 // Enhanced URL encoding limit for query strings and URL parameters
 app.use(express.urlencoded({ 
   extended: true, 
-  limit: '10kb',
+  limit: '5mb',
   parameterLimit: 100 // Limit number of parameters to prevent hash flooding
 }));
 
@@ -166,53 +182,56 @@ app.use(cookieParser()); // Parse cookies
 app.use(mongoSanitize()); // Sanitize data against NoSQL query injection
 app.use(xss()); // Sanitize data against XSS
 
-// Global rate limiter for all requests
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Conditionally apply rate limiting based on environment
+if (process.env.NODE_ENV !== 'test') {
+  // Global rate limiter for all requests
+  const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
-// Authentication-specific rate limiter (more restrictive)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // only allow 5 failed attempts per IP
-  message: 'Too many authentication attempts, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+  // Authentication-specific rate limiter (more restrictive)
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // only allow 5 failed attempts per IP
+    message: 'Too many authentication attempts, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
-// File upload rate limiter
-const fileUploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // limit each IP to 10 file uploads per hour
-  message: 'Too many file uploads from this IP, please try again later.',
-});
+  // File upload rate limiter
+  const fileUploadLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 10, // limit each IP to 10 file uploads per hour
+    message: 'Too many file uploads from this IP, please try again later.',
+  });
 
-// Apply global rate limiter to all requests
-app.use(globalLimiter);
+  // Apply global rate limiter to all requests
+  app.use(globalLimiter);
 
-// Apply specific rate limiting to authentication routes
-app.use("/api/v1/users/login", authLimiter);
-app.use("/api/v1/users/signup", authLimiter);
-app.use("/api/v1/users/forgotPassword", authLimiter);
-app.use("/api/v1/users/resetPassword", authLimiter);
-app.use("/api/v1/users/verifyEmail", authLimiter);
+  // Apply specific rate limiting to authentication routes
+  app.use("/api/v1/users/login", authLimiter);
+  app.use("/api/v1/users/signup", authLimiter);
+  app.use("/api/v1/users/forgotPassword", authLimiter);
+  app.use("/api/v1/users/resetPassword", authLimiter);
+  app.use("/api/v1/users/verifyEmail", authLimiter);
 
-// Apply file upload rate limiting to chat image uploads
-app.use("/api/v1/chat/upload-image", fileUploadLimiter);
+  // Apply file upload rate limiting to chat image uploads
+  app.use("/api/v1/chat/upload-image", fileUploadLimiter);
 
-// General API rate limiting (in addition to global limiter)
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs for API
-  message: "Too many requests from this IP to the API, please try again later!",
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use("/api", apiLimiter);
+  // General API rate limiting (in addition to global limiter)
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs for API
+    message: "Too many requests from this IP to the API, please try again later!",
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use("/api", apiLimiter);
+}
 
 // --- Health Check Endpoint ---
 app.get("/health", (req, res) => {
@@ -273,6 +292,8 @@ app.use("/api/v1/gigs", gigRouter);
 app.use("/api/v1/posts", postRouter);
 app.use("/api/v1/chat", chatRouter);
 app.use("/api/v1/payments", paymentRouter);
+app.use("/api/v1/payment-aggregation", paymentAggregationRouter); // Mount payment aggregation routes
+app.use("/api/v1/dashboard", dashboardRouter); // Mount dashboard routes
 app.use("/api/v1/reviews", reviewRouter);
 app.use("/api/v1/contracts", contractRouter);
 app.use("/api/v1/applications", applicationRouter);

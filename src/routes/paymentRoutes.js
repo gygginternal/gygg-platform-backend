@@ -18,6 +18,8 @@ import {
   getOnboardingRequirements, // Import the new controller function
   getEarningsSummary, // Import the new earnings summary function
   getPaymentHistory, // Import the new payment history function
+  getNuveiWithdrawalHistory, // Import the new Nuvei withdrawal history function
+  getPaymentMethodBalance, // Import the new balance checking function
   // Nuvei-specific imports
   createNuveiPaymentSession,
   getNuveiPaymentSession,
@@ -25,8 +27,24 @@ import {
   handleNuveiWebhook,
   nuveiDemoResponse,
   nuveiDefaultCancel,
+  // Nuvei onboarding imports
+  startNuveiOnboarding,
+  checkNuveiOnboardingStatus,
+  setDefaultPaymentMethod,
+  getUserPaymentMethods,
 } from "../controllers/paymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
+
+// Import Nuvei payment routes
+import nuveiPaymentRoutes from "./nuveiPaymentRoutes.js";
+
+// Import aggregation controller functions
+import {
+  getUnifiedPaymentHistory,
+  getConsolidatedEarningsSummary,
+  getPaymentStatistics,
+  getCrossSystemPaymentDetails
+} from "../controllers/paymentAggregationController.js";
 
 const router = express.Router();
 
@@ -92,9 +110,33 @@ router.post(
     body("amount")
       .isFloat({ min: 0.01 })
       .withMessage("Valid withdrawal amount (minimum $0.01) is required"),
+    body("paymentMethod")
+      .optional()
+      .isIn(['stripe', 'nuvei'])
+      .withMessage("Payment method must be 'stripe' or 'nuvei'")
   ],
   validateRequest,
   processWithdrawal
+);
+
+// Route to get Nuvei withdrawal history
+router.get(
+  "/nuvei-withdrawal-history",
+  [
+    restrictTo("tasker"), // Only taskers can withdraw
+  ],
+  validateRequest,
+  getNuveiWithdrawalHistory
+);
+
+// Route to get available balances for different payment methods
+router.get(
+  "/balances",
+  [
+    restrictTo("tasker", "provider"), // Both can check their balances
+  ],
+  validateRequest,
+  getPaymentMethodBalance
 );
 
 /**
@@ -266,5 +308,96 @@ router.post(
   validateRequest,
   createNuveiPaymentSession
 );
+
+// Aggregated Payment Routes - Unified dashboard functionality
+// Unified payment history from both systems
+router.get(
+  "/unified-history", 
+  [
+    restrictTo("provider", "tasker"), // Both can view their payment history
+  ],
+  validateRequest,
+  getUnifiedPaymentHistory
+);
+
+// Consolidated earnings summary from both systems
+router.get(
+  "/consolidated-summary", 
+  [
+    restrictTo("provider", "tasker"), // Both can view their earnings summary
+  ],
+  validateRequest,
+  getConsolidatedEarningsSummary
+);
+
+// Payment statistics across both systems
+router.get(
+  "/statistics", 
+  [
+    restrictTo("provider", "tasker"), // Both can view their statistics
+  ],
+  validateRequest,
+  getPaymentStatistics
+);
+
+// Get specific payment details from either system
+router.get(
+  "/cross-system/:system/:paymentId", 
+  [
+    restrictTo("provider", "tasker", "admin"), // Both users and admin can access
+    param("system").isIn(['stripe', 'nuvei']).withMessage("System must be 'stripe' or 'nuvei'"),
+    param("paymentId").isMongoId().withMessage("Invalid Payment ID format"),
+  ],
+  validateRequest,
+  getCrossSystemPaymentDetails
+);
+
+// --- Nuvei Onboarding Routes ---
+
+// Start Nuvei onboarding process
+router.post(
+  "/nuvei/start-onboarding",
+  [
+    restrictTo("tasker", "provider"), // Both taskers and providers can connect Nuvei
+  ],
+  validateRequest,
+  startNuveiOnboarding
+);
+
+// Check Nuvei onboarding status
+router.get(
+  "/nuvei/onboarding-status",
+  [
+    restrictTo("tasker", "provider"), // Both can check their status
+  ],
+  validateRequest,
+  checkNuveiOnboardingStatus
+);
+
+// Set default payment method
+router.patch(
+  "/default-payment-method",
+  [
+    restrictTo("tasker", "provider"), // Both can set their default payment method
+    body("defaultPaymentMethod")
+      .isIn(['stripe', 'nuvei'])
+      .withMessage("Payment method must be 'stripe' or 'nuvei'")
+  ],
+  validateRequest,
+  setDefaultPaymentMethod
+);
+
+// Get all payment methods for user
+router.get(
+  "/user-payment-methods",
+  [
+    restrictTo("tasker", "provider"), // Both can get their payment methods
+  ],
+  validateRequest,
+  getUserPaymentMethods
+);
+
+// Mount Nuvei payment routes
+router.use("/nuvei", nuveiPaymentRoutes);
 
 export default router;

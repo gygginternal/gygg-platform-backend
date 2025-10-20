@@ -41,6 +41,36 @@ export const getMe = (req, res, next) => {
   next();
 };
 
+// Helper function to enhance user data with payment information
+const enhanceUserWithPaymentInfo = (user) => {
+  if (!user) return user;
+  
+  // Add payment method status information
+  const enhancedUser = user.toObject ? user.toObject() : { ...user };
+  
+  enhancedUser.paymentMethods = {
+    stripe: {
+      connected: !!user.stripeAccountId,
+      accountId: user.stripeAccountId,
+      chargesEnabled: user.stripeChargesEnabled,
+      payoutsEnabled: user.stripePayoutsEnabled,
+      customerId: user.stripeCustomerId,
+      default: user.defaultPaymentMethod === 'stripe'
+    },
+    nuvei: {
+      connected: !!user.nuveiAccountId,
+      accountId: user.nuveiAccountId,
+      customerId: user.nuveiCustomerId,
+      bankTransferEnabled: user.nuveiBankTransferEnabled,
+      bankDetails: user.nuveiBankDetails,
+      default: user.defaultPaymentMethod === 'nuvei'
+    },
+    defaultMethod: user.defaultPaymentMethod || 'stripe'
+  };
+  
+  return enhancedUser;
+};
+
 // --- Controller: Update logged-in user's data (non-password fields only) ---
 export const updateMe = catchAsync(async (req, res, next) => {
   logger.debug(`updateMe: User ${req.user.id} request. Body:`, req.body, "File:", req.file ? req.file.fieldname : "No file");
@@ -531,7 +561,12 @@ export const getUser = catchAsync(async (req, res, next) => {
   logger.debug(`Fetching user data for ID: ${userIdToFind}`);
   const user = await findDocumentById(User, userIdToFind, "No user found with that ID");
   
-  sendSuccessResponse(res, 200, { user });
+  // Enhance user with payment information if requesting their own profile
+  const enhancedUser = req.user && req.user.id === userIdToFind 
+    ? enhanceUserWithPaymentInfo(user) 
+    : user;
+  
+  sendSuccessResponse(res, 200, { user: enhancedUser });
 });
 
 // Update User by Admin

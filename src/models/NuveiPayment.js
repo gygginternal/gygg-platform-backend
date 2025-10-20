@@ -1,38 +1,36 @@
 import mongoose from "mongoose";
 
-// Define the payment schema
-const paymentSchema = new mongoose.Schema(
+// Define the Nuvei payment schema
+const nuveiPaymentSchema = new mongoose.Schema(
   {
-    // Contract related to the payment (optional for withdrawals)
+    // Contract related to the payment
     contract: {
       type: mongoose.Schema.ObjectId,
       ref: "Contract",
       required: function() { return this.type !== 'withdrawal'; },
-      unique: true,
-      sparse: true, // Allow null values for withdrawals
     },
 
-    // Gig related to the payment (optional for withdrawals)
+    // Gig related to the payment
     gig: {
       type: mongoose.Schema.ObjectId,
       ref: "Gig",
       required: function() { return this.type !== 'withdrawal'; },
     },
 
-    // Payer: Provider making the payment or user withdrawing
+    // Payer: Provider making the payment
     payer: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
       required: [true, "A payment must have a payer."],
-      index: true, // Index to search quickly by payer
+      index: true,
     },
 
-    // Payee: Tasker receiving the payment or user receiving withdrawal
+    // Payee: Tasker receiving the payment
     payee: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
       required: [true, "A payment must have a payee."],
-      index: true, // Index to search quickly by payee
+      index: true,
     },
 
     // Payment type: 'payment' (default) or 'withdrawal'
@@ -46,7 +44,7 @@ const paymentSchema = new mongoose.Schema(
     // Description for the payment/withdrawal
     description: {
       type: String,
-      default: 'Payment for services',
+      default: 'Nuvei payment for services',
     },
 
     // Total payment amount (in cents)
@@ -55,24 +53,24 @@ const paymentSchema = new mongoose.Schema(
       required: [true, "Payment amount is required."],
     },
 
-    // Currency used for the payment (defaults to 'USD')
+    // Currency used for the payment
     currency: {
       type: String,
       required: true,
-      default: "usd",
+      default: "cad", // Default to CAD for Nuvei
     },
 
     // Platform's application fee in cents
     applicationFeeAmount: {
       type: Number,
       required: true,
-      default: 0, // Default to 0 if not specified
+      default: 0,
     },
 
     // Amount actually received by the Tasker (after deducting the platform fee)
     amountReceivedByPayee: {
       type: Number,
-      default: 0,
+      required: true,
     },
 
     // Total amount provider pays (service + platform fee + tax)
@@ -96,103 +94,24 @@ const paymentSchema = new mongoose.Schema(
     // Status of the payment process
     status: {
       type: String,
-      default: "pending_contract",
+      default: "pending",
       required: true,
-      index: true, // Index to search quickly by status
+      index: true,
+      enum: ['pending', 'requires_payment_method', 'processing', 'succeeded', 'failed', 'refunded', 'cancelled']
     },
 
-    // Type of payment method used (Stripe, Credit Card, etc.)
+    // Payment method used (card, instadebit, etc.)
     paymentMethodType: {
       type: String,
-    },
-
-    // --- Stripe Specific Fields ---
-    stripePaymentIntentSecret: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-
-    stripePayoutId: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-    stripePaymentIntentId: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-
-    stripeChargeId: {
-      type: String,
-      index: true,
-    },
-
-    stripeTransferId: {
-      type: String,
-      index: true,
-      sparse: true, // This field might not exist for all payments
-    },
-
-    stripeRefundId: {
-      type: String,
-      index: true,
-    },
-
-    // Payment provider (Stripe or Nuvei)
-    paymentProvider: {
-      type: String,
-      enum: ['stripe', 'nuvei'],
-      default: 'stripe',
+      enum: ['card', 'instadebit', 'ach', 'bank_transfer'],
       required: true,
     },
 
-    // Stripe fields (only required for Stripe payments)
-    stripeConnectedAccountId: {
-      type: String,
-      required: function() { return this.paymentProvider === 'stripe'; },
-    },
-    stripePaymentIntentSecret: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-    stripePayoutId: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-    stripePaymentIntentId: {
-      type: String,
-      index: true,
-      unique: true,
-      sparse: true, // This field might be missing in some payments, so it is sparse.
-    },
-    stripeChargeId: {
-      type: String,
-      index: true,
-    },
-    stripeTransferId: {
-      type: String,
-      index: true,
-      sparse: true, // This field might not exist for all payments
-    },
-    stripeRefundId: {
-      type: String,
-      index: true,
-    },
-
-    // Nuvei-specific fields (only required for Nuvei payments)
+    // --- Nuvei Specific Fields ---
     nuveiSessionId: {
       type: String,
+      required: true,
       index: true,
-      sparse: true,
     },
     nuveiTransactionId: {
       type: String,
@@ -205,16 +124,42 @@ const paymentSchema = new mongoose.Schema(
     },
     nuveiMerchantId: {
       type: String,
-      sparse: true,
+      required: true,
     },
     nuveiMerchantSiteId: {
       type: String,
+      required: true,
+    },
+    nuveiOrderId: {
+      type: String,
+      required: true,
+    },
+    nuveiPaymentMethod: {
+      type: String,
+      enum: ['card', 'instadebit', 'apm'],
+    },
+    nuveiApmProvider: {
+      type: String, // For specific APM providers like instadebit
+    },
+    nuveiBankTransferId: {
+      type: String, // For tracking bank transfer transactions
       sparse: true,
+    },
+    nuveiRefundId: {
+      type: String,
+      sparse: true,
+    },
+
+    // Payment attempt tracking
+    paymentAttempts: {
+      type: Number,
+      default: 0,
     },
 
     // --- Timestamps ---
     succeededAt: { type: Date }, // Timestamp for when the payment was successful
     refundedAt: { type: Date }, // Timestamp for when the payment was refunded
+    failedAt: { type: Date }, // Timestamp for when the payment failed
 
     // Tax amount (in cents)
     taxAmount: {
@@ -236,7 +181,7 @@ const paymentSchema = new mongoose.Schema(
 );
 
 // Pre-save hook to calculate fees and update timestamps when the payment is saved
-paymentSchema.pre("save", async function (next) {
+nuveiPaymentSchema.pre("save", async function (next) {
   // Handle withdrawals differently from regular payments
   if (this.type === 'withdrawal') {
     // For withdrawals, set the same values as the amount (no fees/taxes for withdrawals)
@@ -246,10 +191,7 @@ paymentSchema.pre("save", async function (next) {
     this.applicationFeeAmount = 0;
     this.totalProviderPayment = this.amount;
   } else {
-    // CORRECT FEE STRUCTURE:
-    // - Provider pays: Listed Amount + Platform Fee + Tax on total
-    // - Tasker receives: Listed Amount (exactly what was agreed upon)
-    // - Platform receives: Platform Fee (this is the platform's revenue)
+    // Calculate fees for regular payments
     if ((this.isModified("amount") || this.isNew) && (this.taxAmount === 0 || this.taxAmount === undefined)) {
       // Use environment variables for fee/tax configuration
       const fixedFeeCents = parseInt(process.env.PLATFORM_FIXED_FEE_CENTS) || 500; // $5.00 in cents
@@ -282,7 +224,7 @@ paymentSchema.pre("save", async function (next) {
       // Amount after tax (for legacy compatibility)
       this.amountAfterTax = agreedServiceAmount;
       
-      console.log(`💰 Payment Breakdown for ${this._id}:
+      console.log(`💰 Nuvei Payment Breakdown for ${this._id}:
         ✅ Tasker receives: $${(this.amountReceivedByPayee / 100).toFixed(2)} (full agreed amount)
         💼 Platform fee: $${(this.applicationFeeAmount / 100).toFixed(2)} (platform revenue)
         🏛️ Provider tax: $${(this.providerTaxAmount / 100).toFixed(2)}
@@ -290,17 +232,19 @@ paymentSchema.pre("save", async function (next) {
     }
   }
   
-  // Update timestamps for successful or refunded payment status
+  // Update timestamps for payment status changes
   if (this.isModified("status")) {
     if (this.status === "succeeded" && !this.succeededAt) {
       this.succeededAt = Date.now();
     } else if (this.status === "refunded" && !this.refundedAt) {
       this.refundedAt = Date.now();
+    } else if (this.status === "failed" && !this.failedAt) {
+      this.failedAt = Date.now();
     }
   }
   next(); // Proceed to save the document
 });
 
-// Create and export the Payment model based on the schema
-const Payment = mongoose.model("Payment", paymentSchema);
-export default Payment;
+// Create and export the NuveiPayment model based on the schema
+const NuveiPayment = mongoose.model("NuveiPayment", nuveiPaymentSchema);
+export default NuveiPayment;
