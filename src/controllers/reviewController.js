@@ -169,15 +169,12 @@ export const deleteReview = catchAsync(async (req, res, next) => {
 export const getReviewsByUserId = catchAsync(async (req, res, next) => {
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return next(new AppError('No reviews found for this user.', 404));
+        return next(new AppError('Invalid user ID format.', 400));
     }
     const reviews = await Review.find({ reviewee: userId })
         .populate('reviewer', 'firstName lastName profileImage')
         .populate('gig', 'title')
         .sort({ createdAt: -1 });
-    if (!reviews || reviews.length === 0) {
-        return next(new AppError('No reviews found for this user.', 404));
-    }
     const reviewsWithRevieweeId = reviews.map(r => {
         const obj = r.toObject();
         obj.reviewee = String(userId);
@@ -193,7 +190,7 @@ export const getReviewsByUserId = catchAsync(async (req, res, next) => {
 export const getAverageRatingByUserId = catchAsync(async (req, res, next) => {
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return next(new AppError('No reviews found for this user.', 404));
+        return next(new AppError('Invalid user ID format.', 400));
     }
     const result = await Review.aggregate([
         { $match: { reviewee: new mongoose.Types.ObjectId(userId) } },
@@ -205,14 +202,20 @@ export const getAverageRatingByUserId = catchAsync(async (req, res, next) => {
             },
         },
     ]);
-    if (!result || result.length === 0) {
-        return next(new AppError('No reviews found for this user.', 404));
+    
+    let averageRating = 0;
+    let reviewCount = 0;
+    
+    if (result && result.length > 0) {
+        averageRating = result[0].averageRating;
+        reviewCount = result[0].reviewCount;
     }
+    
     res.status(200).json({
         status: 'success',
         data: {
-            averageRating: result[0].averageRating,
-            reviewCount: result[0].reviewCount,
+            averageRating: averageRating,
+            reviewCount: reviewCount,
         },
     });
 });
