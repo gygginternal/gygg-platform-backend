@@ -1,0 +1,967 @@
+mport { getChatWebsocket } from "./chatController.js";
+import Application from "../models/Application.js";
+mport { getChatWebsocket } from "./chatController.js";
+import { Gig } from "../models/Gig.js";
+mport { getChatWebsocket } from "./chatController.js";
+import Contract from "../models/Contract.js";
+mport { getChatWebsocket } from "./chatController.js";
+import catchAsync from "../utils/catchAsync.js";
+mport { getChatWebsocket } from "./chatController.js";
+import AppError from "../utils/AppError.js";
+mport { getChatWebsocket } from "./chatController.js";
+import app from "../app.js";
+mport { getChatWebsocket } from "./chatController.js";
+import User from "../models/User.js"; // Import the User model
+mport { getChatWebsocket } from "./chatController.js";
+import Notification from '../models/Notification.js';
+mport { getChatWebsocket } from "./chatController.js";
+import logger from '../utils/logger.js';
+mport { getChatWebsocket } from "./chatController.js";
+import notifyAdmin from '../utils/notifyAdmin.js';
+
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const getApplications = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const { gigId } = req.params;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Fetch the gig to get provider's preferences
+mport { getChatWebsocket } from "./chatController.js";
+  const gig = await Gig.findById(gigId).populate('postedBy', 'hobbies peoplePreference skills');
+mport { getChatWebsocket } from "./chatController.js";
+  if (!gig) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("Gig not found.", 404));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Fetch applications for the gig, excluding those with status "cancelled"
+mport { getChatWebsocket } from "./chatController.js";
+  const applications = await Application.find({
+mport { getChatWebsocket } from "./chatController.js";
+    gig: gigId,
+mport { getChatWebsocket } from "./chatController.js";
+    status: { $ne: "cancelled" },
+mport { getChatWebsocket } from "./chatController.js";
+  }).populate("user", "firstName lastName email bio hobbies skills peoplePreference profileImage address rating ratingCount");
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Calculate compatibility scores and format applications
+mport { getChatWebsocket } from "./chatController.js";
+  const formattedApplications = applications.map((application) => {
+mport { getChatWebsocket } from "./chatController.js";
+    const user = application.user;
+mport { getChatWebsocket } from "./chatController.js";
+    
+mport { getChatWebsocket } from "./chatController.js";
+    // Safely format location with null checks
+mport { getChatWebsocket } from "./chatController.js";
+    let location = "Location not specified";
+mport { getChatWebsocket } from "./chatController.js";
+    if (user.address && user.address.city && user.address.state) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = `${user.address.city}, ${user.address.state}`;
+mport { getChatWebsocket } from "./chatController.js";
+    } else if (user.address && user.address.city) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = user.address.city;
+mport { getChatWebsocket } from "./chatController.js";
+    } else if (user.address && user.address.state) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = user.address.state;
+mport { getChatWebsocket } from "./chatController.js";
+    }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+    // Calculate compatibility score based on hobbies and preferences
+mport { getChatWebsocket } from "./chatController.js";
+    const compatibilityScore = calculateCompatibilityScore(gig.postedBy, user);
+mport { getChatWebsocket } from "./chatController.js";
+    
+mport { getChatWebsocket } from "./chatController.js";
+    return {
+mport { getChatWebsocket } from "./chatController.js";
+      id: application._id,
+mport { getChatWebsocket } from "./chatController.js";
+      name: `${user.firstName} ${user.lastName}`,
+mport { getChatWebsocket } from "./chatController.js";
+      location: location,
+mport { getChatWebsocket } from "./chatController.js";
+      description: user.bio || "No bio provided",
+mport { getChatWebsocket } from "./chatController.js";
+      services: user.skills || [],
+mport { getChatWebsocket } from "./chatController.js";
+      hobbies: user.hobbies || [],
+mport { getChatWebsocket } from "./chatController.js";
+      image: user.profileImage || "/default.png",
+mport { getChatWebsocket } from "./chatController.js";
+      status: application.status,
+mport { getChatWebsocket } from "./chatController.js";
+      rating: user.rating || 0,
+mport { getChatWebsocket } from "./chatController.js";
+      ratingCount: user.ratingCount || 0,
+mport { getChatWebsocket } from "./chatController.js";
+      compatibilityScore: compatibilityScore,
+mport { getChatWebsocket } from "./chatController.js";
+      matchingHobbies: getMatchingHobbies(gig.postedBy.hobbies || [], user.hobbies || []),
+mport { getChatWebsocket } from "./chatController.js";
+      matchingSkills: getMatchingSkills(gig.skills || [], user.skills || []),
+mport { getChatWebsocket } from "./chatController.js";
+    };
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Sort applications by compatibility score (highest first), then by rating
+mport { getChatWebsocket } from "./chatController.js";
+  const sortedApplications = formattedApplications.sort((a, b) => {
+mport { getChatWebsocket } from "./chatController.js";
+    // First sort by compatibility score
+mport { getChatWebsocket } from "./chatController.js";
+    if (b.compatibilityScore !== a.compatibilityScore) {
+mport { getChatWebsocket } from "./chatController.js";
+      return b.compatibilityScore - a.compatibilityScore;
+mport { getChatWebsocket } from "./chatController.js";
+    }
+mport { getChatWebsocket } from "./chatController.js";
+    // Then by rating if compatibility scores are equal
+mport { getChatWebsocket } from "./chatController.js";
+    return b.rating - a.rating;
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    results: sortedApplications.length,
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      applications: sortedApplications,
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+// Helper function to calculate compatibility score between provider and tasker
+mport { getChatWebsocket } from "./chatController.js";
+function calculateCompatibilityScore(provider, tasker) {
+mport { getChatWebsocket } from "./chatController.js";
+  let score = 0;
+mport { getChatWebsocket } from "./chatController.js";
+  const maxScore = 100;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Hobby matching (40% of total score)
+mport { getChatWebsocket } from "./chatController.js";
+  const providerHobbies = provider.hobbies || [];
+mport { getChatWebsocket } from "./chatController.js";
+  const taskerHobbies = tasker.hobbies || [];
+mport { getChatWebsocket } from "./chatController.js";
+  const matchingHobbies = getMatchingHobbies(providerHobbies, taskerHobbies);
+mport { getChatWebsocket } from "./chatController.js";
+  
+mport { getChatWebsocket } from "./chatController.js";
+  if (providerHobbies.length > 0) {
+mport { getChatWebsocket } from "./chatController.js";
+    const hobbyScore = (matchingHobbies.length / providerHobbies.length) * 40;
+mport { getChatWebsocket } from "./chatController.js";
+    score += hobbyScore;
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Skills matching (30% of total score)
+mport { getChatWebsocket } from "./chatController.js";
+  const providerSkills = provider.skills || [];
+mport { getChatWebsocket } from "./chatController.js";
+  const taskerSkills = tasker.skills || [];
+mport { getChatWebsocket } from "./chatController.js";
+  const matchingSkills = getMatchingSkills(providerSkills, taskerSkills);
+mport { getChatWebsocket } from "./chatController.js";
+  
+mport { getChatWebsocket } from "./chatController.js";
+  if (providerSkills.length > 0) {
+mport { getChatWebsocket } from "./chatController.js";
+    const skillScore = (matchingSkills.length / providerSkills.length) * 30;
+mport { getChatWebsocket } from "./chatController.js";
+    score += skillScore;
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // People preference matching (20% of total score)
+mport { getChatWebsocket } from "./chatController.js";
+  const providerPreferences = provider.peoplePreference || [];
+mport { getChatWebsocket } from "./chatController.js";
+  const taskerPreferences = tasker.peoplePreference || [];
+mport { getChatWebsocket } from "./chatController.js";
+  
+mport { getChatWebsocket } from "./chatController.js";
+  if (providerPreferences.length > 0 && taskerPreferences.length > 0) {
+mport { getChatWebsocket } from "./chatController.js";
+    const preferenceMatches = providerPreferences.filter(pref => 
+mport { getChatWebsocket } from "./chatController.js";
+      taskerPreferences.some(tPref => 
+mport { getChatWebsocket } from "./chatController.js";
+        pref.toLowerCase().includes(tPref.toLowerCase()) || 
+mport { getChatWebsocket } from "./chatController.js";
+        tPref.toLowerCase().includes(pref.toLowerCase())
+mport { getChatWebsocket } from "./chatController.js";
+      )
+mport { getChatWebsocket } from "./chatController.js";
+    );
+mport { getChatWebsocket } from "./chatController.js";
+    const preferenceScore = (preferenceMatches.length / providerPreferences.length) * 20;
+mport { getChatWebsocket } from "./chatController.js";
+    score += preferenceScore;
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Rating bonus (10% of total score)
+mport { getChatWebsocket } from "./chatController.js";
+  const ratingBonus = (tasker.rating || 0) * 2; // Max 10 points for 5-star rating
+mport { getChatWebsocket } from "./chatController.js";
+  score += ratingBonus;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  return Math.min(Math.round(score), maxScore);
+mport { getChatWebsocket } from "./chatController.js";
+}
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+// Helper function to get matching hobbies
+mport { getChatWebsocket } from "./chatController.js";
+function getMatchingHobbies(providerHobbies, taskerHobbies) {
+mport { getChatWebsocket } from "./chatController.js";
+  return providerHobbies.filter(hobby => 
+mport { getChatWebsocket } from "./chatController.js";
+    taskerHobbies.some(tHobby => 
+mport { getChatWebsocket } from "./chatController.js";
+      hobby.toLowerCase() === tHobby.toLowerCase()
+mport { getChatWebsocket } from "./chatController.js";
+    )
+mport { getChatWebsocket } from "./chatController.js";
+  );
+mport { getChatWebsocket } from "./chatController.js";
+}
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+// Helper function to get matching skills
+mport { getChatWebsocket } from "./chatController.js";
+function getMatchingSkills(requiredSkills, taskerSkills) {
+mport { getChatWebsocket } from "./chatController.js";
+  return requiredSkills.filter(skill => 
+mport { getChatWebsocket } from "./chatController.js";
+    taskerSkills.some(tSkill => 
+mport { getChatWebsocket } from "./chatController.js";
+      skill.toLowerCase() === tSkill.toLowerCase()
+mport { getChatWebsocket } from "./chatController.js";
+    )
+mport { getChatWebsocket } from "./chatController.js";
+  );
+mport { getChatWebsocket } from "./chatController.js";
+}
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const applyToGig = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const { gigId } = req.params;
+mport { getChatWebsocket } from "./chatController.js";
+  const user = req.user._id; // Logged-in tasker
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the gig exists
+mport { getChatWebsocket } from "./chatController.js";
+  const gig = await Gig.findById(gigId);
+mport { getChatWebsocket } from "./chatController.js";
+  if (!gig) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("Gig not found.", 404));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the application already exists
+mport { getChatWebsocket } from "./chatController.js";
+  const existingApplication = await Application.findOne({ user, gig: gigId });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  if (existingApplication) {
+mport { getChatWebsocket } from "./chatController.js";
+    if (existingApplication.status === "cancelled") {
+mport { getChatWebsocket } from "./chatController.js";
+      existingApplication.status = "pending"; // Reopen the application if it was cancelled
+mport { getChatWebsocket } from "./chatController.js";
+      await existingApplication.save();
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+      return res.status(201).json({
+mport { getChatWebsocket } from "./chatController.js";
+        status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+        data: {
+mport { getChatWebsocket } from "./chatController.js";
+          application: existingApplication,
+mport { getChatWebsocket } from "./chatController.js";
+        },
+mport { getChatWebsocket } from "./chatController.js";
+      });
+mport { getChatWebsocket } from "./chatController.js";
+    }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("You have already applied for this gig.", 400));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Create a new application
+mport { getChatWebsocket } from "./chatController.js";
+  const application = await Application.create({
+mport { getChatWebsocket } from "./chatController.js";
+    user,
+mport { getChatWebsocket } from "./chatController.js";
+    gig: gigId,
+mport { getChatWebsocket } from "./chatController.js";
+    status: "pending",
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(201).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      application,
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const acceptApplication = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const { applicationId } = req.params;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Find the application by ID and populate required fields
+mport { getChatWebsocket } from "./chatController.js";
+  const application = await Application.findById(applicationId)
+mport { getChatWebsocket } from "./chatController.js";
+    .populate("gig") // Populate the gig details
+mport { getChatWebsocket } from "./chatController.js";
+    .populate("user"); // Populate the tasker details
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the application exists
+mport { getChatWebsocket } from "./chatController.js";
+  if (!application) {
+mport { getChatWebsocket } from "./chatController.js";
+    logger.error(`acceptApplication: Application ${applicationId} not found`);
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("Application not found.", 404));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the logged-in user is the provider who posted the gig
+mport { getChatWebsocket } from "./chatController.js";
+  // Handle both populated and unpopulated cases for gig.postedBy
+mport { getChatWebsocket } from "./chatController.js";
+  const gigProviderId = application.gig.postedBy._id ? 
+mport { getChatWebsocket } from "./chatController.js";
+    application.gig.postedBy._id.toString() : 
+mport { getChatWebsocket } from "./chatController.js";
+    application.gig.postedBy.toString();
+mport { getChatWebsocket } from "./chatController.js";
+    
+mport { getChatWebsocket } from "./chatController.js";
+  if (gigProviderId !== req.user._id.toString()) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(
+mport { getChatWebsocket } from "./chatController.js";
+      new AppError(
+mport { getChatWebsocket } from "./chatController.js";
+        "You are not authorized to accept this application.",
+mport { getChatWebsocket } from "./chatController.js";
+        403
+mport { getChatWebsocket } from "./chatController.js";
+      )
+mport { getChatWebsocket } from "./chatController.js";
+    );
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the application is already accepted
+mport { getChatWebsocket } from "./chatController.js";
+  if (application.status === "accepted") {
+mport { getChatWebsocket } from "./chatController.js";
+    logger.warn(`acceptApplication: Application ${applicationId} already accepted`);
+mport { getChatWebsocket } from "./chatController.js";
+    return next(
+mport { getChatWebsocket } from "./chatController.js";
+      new AppError("This application has already been accepted.", 400)
+mport { getChatWebsocket } from "./chatController.js";
+    );
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the gig is already assigned
+mport { getChatWebsocket } from "./chatController.js";
+  const gig = application.gig;
+mport { getChatWebsocket } from "./chatController.js";
+  if (gig.status === "assigned") {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("This gig has already been assigned.", 400));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Update the application status to "accepted"
+mport { getChatWebsocket } from "./chatController.js";
+  application.status = "accepted";
+mport { getChatWebsocket } from "./chatController.js";
+  await application.save();
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Update the gig status to "assigned"
+mport { getChatWebsocket } from "./chatController.js";
+  gig.status = "assigned";
+mport { getChatWebsocket } from "./chatController.js";
+  gig.assignedTo = application.user; // Assign the tasker to the gig
+mport { getChatWebsocket } from "./chatController.js";
+  await gig.save();
+mport { getChatWebsocket } from "./chatController.js";
+  logger.info(`acceptApplication: Gig ${gig._id} assigned to tasker ${application.user}`);
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Create a new contract
+mport { getChatWebsocket } from "./chatController.js";
+  const contractData = {
+mport { getChatWebsocket } from "./chatController.js";
+    gig: gig._id,
+mport { getChatWebsocket } from "./chatController.js";
+    provider: gig.postedBy._id || gig.postedBy, // Handle both populated and unpopulated cases
+mport { getChatWebsocket } from "./chatController.js";
+    tasker: application.user, // The tasker assigned to the gig
+mport { getChatWebsocket } from "./chatController.js";
+    status: "active", // Set to active when contract is created
+mport { getChatWebsocket } from "./chatController.js";
+    isHourly: gig.isHourly || false,
+mport { getChatWebsocket } from "./chatController.js";
+  };
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Set contract fields based on gig type
+mport { getChatWebsocket } from "./chatController.js";
+  if (gig.isHourly) {
+mport { getChatWebsocket } from "./chatController.js";
+    contractData.hourlyRate = gig.ratePerHour;
+mport { getChatWebsocket } from "./chatController.js";
+    contractData.estimatedHours = gig.estimatedHours || gig.duration || 1;
+mport { getChatWebsocket } from "./chatController.js";
+    // For hourly contracts, agreedCost is calculated as rate * estimated hours
+mport { getChatWebsocket } from "./chatController.js";
+    contractData.agreedCost = gig.ratePerHour * (gig.estimatedHours || gig.duration || 1);
+mport { getChatWebsocket } from "./chatController.js";
+    logger.info(`acceptApplication: Creating hourly contract - Rate: ${gig.ratePerHour}, Hours: ${contractData.estimatedHours}, Total: ${contractData.agreedCost}`);
+mport { getChatWebsocket } from "./chatController.js";
+  } else {
+mport { getChatWebsocket } from "./chatController.js";
+    contractData.agreedCost = gig.cost;
+mport { getChatWebsocket } from "./chatController.js";
+    logger.info(`acceptApplication: Creating fixed contract - Cost: ${gig.cost}`);
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  logger.debug(`acceptApplication: Contract data:`, contractData);
+mport { getChatWebsocket } from "./chatController.js";
+  const contract = await Contract.create(contractData);
+mport { getChatWebsocket } from "./chatController.js";
+  logger.info(`acceptApplication: Contract ${contract._id} created successfully`);
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Emit WebSocket events to notify connected clients
+mport { getChatWebsocket } from "./chatController.js";
+  if (chatWebsocket) {
+mport { getChatWebsocket } from "./chatController.js";
+    try {
+mport { getChatWebsocket } from "./chatController.js";
+      // Emit to provider (gig poster)
+mport { getChatWebsocket } from "./chatController.js";
+      chatWebsocket.emitNewMessage(gig.postedBy._id || gig.postedBy, {
+mport { getChatWebsocket } from "./chatController.js";
+        type: 'contract_created',
+mport { getChatWebsocket } from "./chatController.js";
+        content: `A new contract has been created for your gig: ${gig.title}`,
+mport { getChatWebsocket } from "./chatController.js";
+        gigId: gig._id,
+mport { getChatWebsocket } from "./chatController.js";
+        contractId: contract._id,
+mport { getChatWebsocket } from "./chatController.js";
+        taskerId: application.user._id,
+mport { getChatWebsocket } from "./chatController.js";
+        timestamp: new Date().toISOString()
+mport { getChatWebsocket } from "./chatController.js";
+      });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+      // Emit to tasker (gig applicant)
+mport { getChatWebsocket } from "./chatController.js";
+      chatWebsocket.emitNewMessage(application.user._id, {
+mport { getChatWebsocket } from "./chatController.js";
+        type: 'contract_accepted',
+mport { getChatWebsocket } from "./chatController.js";
+        content: `Your application for gig '${gig.title}' has been accepted! A new contract has been created.`,
+mport { getChatWebsocket } from "./chatController.js";
+        gigId: gig._id,
+mport { getChatWebsocket } from "./chatController.js";
+        contractId: contract._id,
+mport { getChatWebsocket } from "./chatController.js";
+        providerId: gig.postedBy._id || gig.postedBy,
+mport { getChatWebsocket } from "./chatController.js";
+        timestamp: new Date().toISOString()
+mport { getChatWebsocket } from "./chatController.js";
+      });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+      logger.info(`[WS] Contract creation events emitted for gig ${gig._id} and contract ${contract._id}`);
+mport { getChatWebsocket } from "./chatController.js";
+    } catch (websocketError) {
+mport { getChatWebsocket } from "./chatController.js";
+      logger.error('[WS] Error emitting contract creation events:', websocketError.message);
+mport { getChatWebsocket } from "./chatController.js";
+    }
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    message: "Application accepted and contract created successfully.",
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      application,
+mport { getChatWebsocket } from "./chatController.js";
+      gig,
+mport { getChatWebsocket } from "./chatController.js";
+      contract,
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const rejectApplication = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const { applicationId } = req.params;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Find the application and update its status to "rejected"
+mport { getChatWebsocket } from "./chatController.js";
+  const application = await Application.findByIdAndUpdate(
+mport { getChatWebsocket } from "./chatController.js";
+    applicationId,
+mport { getChatWebsocket } from "./chatController.js";
+    { status: "rejected" },
+mport { getChatWebsocket } from "./chatController.js";
+    { new: true, runValidators: true }
+mport { getChatWebsocket } from "./chatController.js";
+  );
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  if (!application) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("Application not found.", 404));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      application,
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const cancelApplication = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const { applicationId } = req.params;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Find the application by ID
+mport { getChatWebsocket } from "./chatController.js";
+  const application = await Application.findById(applicationId);
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  if (!application) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError("Application not found.", 404));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Check if the logged-in user is the owner of the application
+mport { getChatWebsocket } from "./chatController.js";
+  if (application.user.toString() !== req.user._id.toString()) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(
+mport { getChatWebsocket } from "./chatController.js";
+      new AppError("You are not authorized to cancel this application.", 403)
+mport { getChatWebsocket } from "./chatController.js";
+    );
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Update the application status to "cancelled"
+mport { getChatWebsocket } from "./chatController.js";
+  application.status = "cancelled";
+mport { getChatWebsocket } from "./chatController.js";
+  await application.save();
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    message: "Application successfully cancelled.",
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      application,
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const topMatchApplications = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const user = req.user;
+mport { getChatWebsocket } from "./chatController.js";
+  const { limit = 10 } = req.query;
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Find all applications where the user is the provider (gig poster)
+mport { getChatWebsocket } from "./chatController.js";
+  const userGigs = await Gig.find({ postedBy: user._id }).select('_id');
+mport { getChatWebsocket } from "./chatController.js";
+  const gigIds = userGigs.map(gig => gig._id);
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  if (gigIds.length === 0) {
+mport { getChatWebsocket } from "./chatController.js";
+    return res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+      status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+      data: {
+mport { getChatWebsocket } from "./chatController.js";
+        applications: [],
+mport { getChatWebsocket } from "./chatController.js";
+        message: "No gigs found to match applications against"
+mport { getChatWebsocket } from "./chatController.js";
+      },
+mport { getChatWebsocket } from "./chatController.js";
+    });
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Find all applications for user's gigs
+mport { getChatWebsocket } from "./chatController.js";
+  const applications = await Application.find({
+mport { getChatWebsocket } from "./chatController.js";
+    gig: { $in: gigIds },
+mport { getChatWebsocket } from "./chatController.js";
+    status: "pending" // Only show pending applications
+mport { getChatWebsocket } from "./chatController.js";
+  })
+mport { getChatWebsocket } from "./chatController.js";
+  .populate("user", "firstName lastName email bio hobbies skills peoplePreference profileImage address rating ratingCount")
+mport { getChatWebsocket } from "./chatController.js";
+  .populate("gig", "title description hobbies skills");
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Calculate compatibility scores for each application
+mport { getChatWebsocket } from "./chatController.js";
+  const scoredApplications = applications.map(application => {
+mport { getChatWebsocket } from "./chatController.js";
+    const tasker = application.user;
+mport { getChatWebsocket } from "./chatController.js";
+    const gig = application.gig;
+mport { getChatWebsocket } from "./chatController.js";
+    
+mport { getChatWebsocket } from "./chatController.js";
+    // Safely format location
+mport { getChatWebsocket } from "./chatController.js";
+    let location = "Location not specified";
+mport { getChatWebsocket } from "./chatController.js";
+    if (tasker.address && tasker.address.city && tasker.address.state) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = `${tasker.address.city}, ${tasker.address.state}`;
+mport { getChatWebsocket } from "./chatController.js";
+    } else if (tasker.address && tasker.address.city) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = tasker.address.city;
+mport { getChatWebsocket } from "./chatController.js";
+    } else if (tasker.address && tasker.address.state) {
+mport { getChatWebsocket } from "./chatController.js";
+      location = tasker.address.state;
+mport { getChatWebsocket } from "./chatController.js";
+    }
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+    const compatibilityScore = calculateCompatibilityScore(user, tasker);
+mport { getChatWebsocket } from "./chatController.js";
+    const matchingHobbies = getMatchingHobbies(user.hobbies || [], tasker.hobbies || []);
+mport { getChatWebsocket } from "./chatController.js";
+    const matchingSkills = getMatchingSkills(gig.skills || [], tasker.skills || []);
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+    return {
+mport { getChatWebsocket } from "./chatController.js";
+      id: application._id,
+mport { getChatWebsocket } from "./chatController.js";
+      gigId: gig._id,
+mport { getChatWebsocket } from "./chatController.js";
+      gigTitle: gig.title,
+mport { getChatWebsocket } from "./chatController.js";
+      name: `${tasker.firstName} ${tasker.lastName}`,
+mport { getChatWebsocket } from "./chatController.js";
+      location: location,
+mport { getChatWebsocket } from "./chatController.js";
+      description: tasker.bio || "No bio provided",
+mport { getChatWebsocket } from "./chatController.js";
+      services: tasker.skills || [],
+mport { getChatWebsocket } from "./chatController.js";
+      hobbies: tasker.hobbies || [],
+mport { getChatWebsocket } from "./chatController.js";
+      image: tasker.profileImage || "/default.png",
+mport { getChatWebsocket } from "./chatController.js";
+      status: application.status,
+mport { getChatWebsocket } from "./chatController.js";
+      rating: tasker.rating || 0,
+mport { getChatWebsocket } from "./chatController.js";
+      ratingCount: tasker.ratingCount || 0,
+mport { getChatWebsocket } from "./chatController.js";
+      compatibilityScore: compatibilityScore,
+mport { getChatWebsocket } from "./chatController.js";
+      matchingHobbies: matchingHobbies,
+mport { getChatWebsocket } from "./chatController.js";
+      matchingSkills: matchingSkills,
+mport { getChatWebsocket } from "./chatController.js";
+      appliedAt: application.createdAt
+mport { getChatWebsocket } from "./chatController.js";
+    };
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  // Sort by compatibility score (highest first) and limit results
+mport { getChatWebsocket } from "./chatController.js";
+  const topMatches = scoredApplications
+mport { getChatWebsocket } from "./chatController.js";
+    .sort((a, b) => b.compatibilityScore - a.compatibilityScore)
+mport { getChatWebsocket } from "./chatController.js";
+    .slice(0, parseInt(limit));
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({
+mport { getChatWebsocket } from "./chatController.js";
+    status: "success",
+mport { getChatWebsocket } from "./chatController.js";
+    results: topMatches.length,
+mport { getChatWebsocket } from "./chatController.js";
+    data: {
+mport { getChatWebsocket } from "./chatController.js";
+      applications: topMatches,
+mport { getChatWebsocket } from "./chatController.js";
+      totalApplications: applications.length,
+mport { getChatWebsocket } from "./chatController.js";
+      averageCompatibility: topMatches.length > 0 
+mport { getChatWebsocket } from "./chatController.js";
+        ? Math.round(topMatches.reduce((sum, app) => sum + app.compatibilityScore, 0) / topMatches.length)
+mport { getChatWebsocket } from "./chatController.js";
+        : 0
+mport { getChatWebsocket } from "./chatController.js";
+    },
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const deleteApplication = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const applicationId = req.params.id;
+mport { getChatWebsocket } from "./chatController.js";
+  const application = await Application.findById(applicationId);
+mport { getChatWebsocket } from "./chatController.js";
+  if (!application) return next(new AppError('No application found with that ID', 404));
+mport { getChatWebsocket } from "./chatController.js";
+  // Only user or admin can delete
+mport { getChatWebsocket } from "./chatController.js";
+  if (
+mport { getChatWebsocket } from "./chatController.js";
+    application.user.toString() !== req.user._id.toString() &&
+mport { getChatWebsocket } from "./chatController.js";
+    req.user.role !== 'admin'
+mport { getChatWebsocket } from "./chatController.js";
+  ) {
+mport { getChatWebsocket } from "./chatController.js";
+    return next(new AppError('You are not authorized to delete this application', 403));
+mport { getChatWebsocket } from "./chatController.js";
+  }
+mport { getChatWebsocket } from "./chatController.js";
+  await Promise.all([
+mport { getChatWebsocket } from "./chatController.js";
+    Notification.deleteMany({ 'data.applicationId': applicationId }),
+mport { getChatWebsocket } from "./chatController.js";
+  ]);
+mport { getChatWebsocket } from "./chatController.js";
+  await Application.findByIdAndDelete(applicationId);
+mport { getChatWebsocket } from "./chatController.js";
+  logger.warn(`Application ${applicationId} and related data deleted by user ${req.user.id}`);
+mport { getChatWebsocket } from "./chatController.js";
+  await notifyAdmin('Application deleted', { applicationId, deletedBy: req.user.id });
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(204).json({ status: 'success', data: null });
+mport { getChatWebsocket } from "./chatController.js";
+});
+mport { getChatWebsocket } from "./chatController.js";
+
+mport { getChatWebsocket } from "./chatController.js";
+export const getMyAppliedGigs = catchAsync(async (req, res, next) => {
+mport { getChatWebsocket } from "./chatController.js";
+  const userId = req.user._id;
+mport { getChatWebsocket } from "./chatController.js";
+  // Find all applications for the current user, populate gig details
+mport { getChatWebsocket } from "./chatController.js";
+  const applications = await Application.find({ user: userId })
+mport { getChatWebsocket } from "./chatController.js";
+    .populate('gig');
+mport { getChatWebsocket } from "./chatController.js";
+  
+mport { getChatWebsocket } from "./chatController.js";
+  // Map to include both gig details and application info
+mport { getChatWebsocket } from "./chatController.js";
+  const gigsWithApplications = applications
+mport { getChatWebsocket } from "./chatController.js";
+    .filter(app => app.gig) // Filter out null gigs
+mport { getChatWebsocket } from "./chatController.js";
+    .map(app => ({
+mport { getChatWebsocket } from "./chatController.js";
+      ...app.gig.toObject(),
+mport { getChatWebsocket } from "./chatController.js";
+      applicationId: app._id,
+mport { getChatWebsocket } from "./chatController.js";
+      applicationStatus: app.status
+mport { getChatWebsocket } from "./chatController.js";
+    }));
+mport { getChatWebsocket } from "./chatController.js";
+  
+mport { getChatWebsocket } from "./chatController.js";
+  res.status(200).json({ 
+mport { getChatWebsocket } from "./chatController.js";
+    status: 'success', 
+mport { getChatWebsocket } from "./chatController.js";
+    results: gigsWithApplications.length, 
+mport { getChatWebsocket } from "./chatController.js";
+    data: gigsWithApplications 
+mport { getChatWebsocket } from "./chatController.js";
+  });
+mport { getChatWebsocket } from "./chatController.js";
+}); 

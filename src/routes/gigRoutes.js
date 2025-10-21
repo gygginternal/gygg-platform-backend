@@ -11,10 +11,11 @@ import {
   getMyGigsWithNoApplications,
   applyToGig,
   matchGigsForTasker,
+  getApplicationsForGig,
   getMyApplicationForGig,
 } from "../controllers/gigController.js";
 import { topMatchGigs } from "../controllers/taskersController.js";
-import { getApplications } from "../controllers/applicationController.js";
+import { acceptApplication } from "../controllers/applicationController.js";
 
 const router = express.Router();
 
@@ -206,7 +207,7 @@ router.get(
     param("gigId").isMongoId().withMessage("Invalid Gig ID format"), // Validate gig ID
   ],
   validateRequest,
-  getApplications // Calls the controller to list applications
+  getApplicationsForGig // Calls the controller to list applications
 );
 
 // Add POST route for applying to a gig

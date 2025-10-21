@@ -20,6 +20,9 @@ let chatWebsocket;
 
 export const setChatWebsocket = (websocket) => {
   chatWebsocket = websocket;
+
+  
+  return chatWebsocket;
 };
 
 const s3Client = new S3Client({
@@ -502,3 +505,8 @@ export const deleteChatMessage = catchAsync(async (req, res, next) => {
   await notifyAdmin('Chat message deleted', { messageId: message._id, sender: message.sender });
   res.status(204).json({ status: 'success', data: null });
 });
+
+// Export function to get the chat websocket instance
+export const getChatWebsocket = () => {
+  return chatWebsocket;
+};
