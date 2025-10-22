@@ -251,9 +251,10 @@ export const topMatchApplications = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Find all applications for user's gigs
+  // Find all applications for user's gigs, excluding accepted ones (which have formed contracts)
   const applications = await Application.find({
-    gig: { $in: gigIds }
+    gig: { $in: gigIds },
+    status: { $ne: 'accepted' }  // Exclude accepted applications (contracts already formed)
   })
     .populate({
       path: 'user',
@@ -284,6 +285,10 @@ export const getMyAppliedGigs = catchAsync(async (req, res, next) => {
   
   if (status !== 'all') {
     query.status = status;
+  } else {
+    // By default, exclude 'accepted' applications since they become contracts
+    // Only show applications that are still in application status
+    query.status = { $ne: 'accepted' };
   }
 
   // Get applications with pagination

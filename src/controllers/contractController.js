@@ -311,23 +311,27 @@ export const submitWork = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check that both provider and tasker have connected their Stripe accounts
+  // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
   const provider = await User.findById(contract.provider._id || contract.provider);
   const tasker = await User.findById(contract.tasker._id || contract.tasker);
   
-  if (!provider.stripeAccountId) {
+  // Check if provider has either Stripe or Nuvei account connected
+  const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
+  if (!hasProviderPaymentMethod) {
     return next(
       new AppError(
-        "Provider must connect their Stripe account before work can be submitted.",
+        "Provider must connect their payment account (Stripe or Nuvei) before work can be submitted.",
         400
       )
     );
   }
   
-  if (!tasker.stripeAccountId) {
+  // Check if tasker has either Stripe or Nuvei account connected
+  const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
+  if (!hasTaskerPaymentMethod) {
     return next(
       new AppError(
-        "Tasker must connect their Stripe account before submitting work.",
+        "Tasker must connect their payment account (Stripe or Nuvei) before submitting work.",
         400
       )
     );
@@ -383,23 +387,27 @@ export const approveCompletionAndRelease = catchAsync(
       );
     }
 
-    // Check that both provider and tasker have connected their Stripe accounts
+    // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
     const provider = await User.findById(contract.provider._id || contract.provider);
     const tasker = await User.findById(contract.tasker._id || contract.tasker);
     
-    if (!provider.stripeAccountId) {
+    // Check if provider has either Stripe or Nuvei account connected
+    const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
+    if (!hasProviderPaymentMethod) {
       return next(
         new AppError(
-          "Provider must connect their Stripe account before approving work.",
+          "Provider must connect their payment account (Stripe or Nuvei) before approving work.",
           400
         )
       );
     }
     
-    if (!tasker.stripeAccountId) {
+    // Check if tasker has either Stripe or Nuvei account connected
+    const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
+    if (!hasTaskerPaymentMethod) {
       return next(
         new AppError(
-          "Tasker must connect their Stripe account before work can be approved.",
+          "Tasker must connect their payment account (Stripe or Nuvei) before work can be approved.",
           400
         )
       );
@@ -483,23 +491,27 @@ export const payTasker = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check that both provider and tasker have connected their Stripe accounts
+  // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
   const provider = await User.findById(contract.provider._id || contract.provider);
   const tasker = await User.findById(contract.tasker._id || contract.tasker);
   
-  if (!provider.stripeAccountId) {
+  // Check if provider has either Stripe or Nuvei account connected
+  const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
+  if (!hasProviderPaymentMethod) {
     return next(
       new AppError(
-        "Provider must connect their Stripe account before paying tasker.",
+        "Provider must connect their payment account (Stripe or Nuvei) before paying tasker.",
         400
       )
     );
   }
   
-  if (!tasker.stripeAccountId) {
+  // Check if tasker has either Stripe or Nuvei account connected
+  const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
+  if (!hasTaskerPaymentMethod) {
     return next(
       new AppError(
-        "Tasker must connect their Stripe account before payment can be made.",
+        "Tasker must connect their payment account (Stripe or Nuvei) before payment can be made.",
         400
       )
     );
@@ -531,13 +543,22 @@ export const payTasker = catchAsync(async (req, res, next) => {
         
         // Get contract details for payment calculation
         const contractWithDetails = await Contract.findById(contractId)
-          .populate('provider', 'firstName lastName email stripeAccountId')
-          .populate('tasker', 'firstName lastName email stripeAccountId')
+          .populate('provider', 'firstName lastName email stripeAccountId nuveiAccountId')
+          .populate('tasker', 'firstName lastName email stripeAccountId nuveiAccountId')
           .populate('gig', 'title');
         
         // Calculate payment amounts (contract.agreedCost is in dollars, convert to cents)
         const serviceAmountCents = Math.round(contractWithDetails.agreedCost * 100);
         
+        // In development mode, determine which payment provider to use based on user's connected accounts
+        const hasStripe = !!contractWithDetails.tasker.stripeAccountId;
+        const hasNuvei = !!contractWithDetails.tasker.nuveiAccountId;
+        
+        // Default to stripe if both are available, or use whichever is available
+        const useStripe = hasStripe || !hasNuvei; // Use Stripe if available or if Nuvei isn't available
+        const paymentProvider = useStripe ? 'stripe' : 'nuvei';
+        const connectedAccountId = useStripe ? contractWithDetails.tasker.stripeAccountId : contractWithDetails.tasker.nuveiAccountId;
+
         payment = new Payment({
           contract: contractId,
           gig: contractWithDetails.gig._id,
@@ -546,7 +567,12 @@ export const payTasker = catchAsync(async (req, res, next) => {
           amount: serviceAmountCents,
           currency: 'usd',
           status: 'succeeded',
-          stripeConnectedAccountId: contractWithDetails.tasker.stripeAccountId || 'dev_account',
+          paymentProvider, // Set the payment provider
+          // Set the appropriate account ID based on the payment provider
+          ...(useStripe 
+            ? { stripeConnectedAccountId: connectedAccountId || 'dev_account' }
+            : { nuveiMerchantId: connectedAccountId || 'dev_account' }
+          ),
           description: `Payment for: ${contractWithDetails.gig.title}`,
           type: 'payment',
           // Set required fields that will be calculated in pre-save hook

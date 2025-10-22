@@ -67,3 +67,7 @@ web_modules/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+docs/PAYMENT_TESTS_FIX_GUIDE.md
+docs/PAYMENT_SYSTEM_QUICK_START.md
+docs/PAYMENT_SYSTEM_DOCUMENTATION.md
+docs/DDOS_EXECUTIVE_SUMMARY.txt
