@@ -487,7 +487,7 @@ class AggregatedPaymentService {
 
       return {
         period,
-        consolidatedSummary,
+        summary: consolidatedSummary, // Changed from consolidatedSummary to summary to match test expectations
         currencies: ['USD', 'CAD'] // Mixed currencies from both systems
       };
     } catch (error) {
@@ -935,6 +935,88 @@ class AggregatedPaymentService {
       logger.error('Error getting payment efficiency metrics:', error);
       throw new Error(`Failed to get payment efficiency metrics: ${error.message}`);
     }
+  }
+
+  // Helper function to merge statistics from multiple sources
+  mergeStats(statsMaps) {
+    // Initialize merged stats object
+    const merged = {
+      provider: {
+        totalContracts: 0,
+        totalSpent: 0,
+        totalPlatformFees: 0,
+        totalServiceCosts: 0,
+        totalTaxesPaid: 0,
+        averageSpent: 0,
+        totalSpentFormatted: '0.00',
+        totalPlatformFeesFormatted: '0.00',
+        totalServiceCostsFormatted: '0.00',
+        totalTaxesPaidFormatted: '0.00',
+        averageSpentFormatted: '0.00'
+      },
+      tasker: {
+        totalContracts: 0,
+        totalEarned: 0,
+        totalWithdrawn: 0,
+        totalTaxesPaid: 0,
+        averageEarning: 0,
+        totalEarnedFormatted: '0.00',
+        totalWithdrawnFormatted: '0.00',
+        totalTaxesPaidFormatted: '0.00',
+        averageEarningFormatted: '0.00',
+        withdrawalCount: 0
+      }
+    };
+
+    // Iterate through each stats map and aggregate values
+    statsMaps.forEach(statsMap => {
+      if (!statsMap) return;
+      
+      // Merge provider stats
+      if (statsMap.provider) {
+        const providerStats = statsMap.provider;
+        merged.provider.totalContracts += providerStats.totalContracts || 0;
+        merged.provider.totalSpent += providerStats.totalSpent || 0;
+        merged.provider.totalPlatformFees += providerStats.totalPlatformFees || 0;
+        merged.provider.totalServiceCosts += providerStats.totalServiceCosts || 0;
+        merged.provider.totalTaxesPaid += providerStats.totalTaxesPaid || 0;
+        
+        // Format updated values
+        merged.provider.totalSpentFormatted = (merged.provider.totalSpent / 100).toFixed(2);
+        merged.provider.totalPlatformFeesFormatted = (merged.provider.totalPlatformFees / 100).toFixed(2);
+        merged.provider.totalServiceCostsFormatted = (merged.provider.totalServiceCosts / 100).toFixed(2);
+        merged.provider.totalTaxesPaidFormatted = (merged.provider.totalTaxesPaid / 100).toFixed(2);
+        
+        // Calculate average spent if we have contracts
+        if (merged.provider.totalContracts > 0) {
+          merged.provider.averageSpent = merged.provider.totalSpent / merged.provider.totalContracts;
+          merged.provider.averageSpentFormatted = (merged.provider.averageSpent / 100).toFixed(2);
+        }
+      }
+      
+      // Merge tasker stats
+      if (statsMap.tasker) {
+        const taskerStats = statsMap.tasker;
+        merged.tasker.totalContracts += taskerStats.totalContracts || 0;
+        merged.tasker.totalEarned += taskerStats.totalEarned || 0;
+        merged.tasker.totalWithdrawn += taskerStats.totalWithdrawn || 0;
+        merged.tasker.totalTaxesPaid += taskerStats.totalTaxesPaid || 0;
+        merged.tasker.withdrawalCount += taskerStats.withdrawalCount || 0;
+        
+        // Format updated values
+        merged.tasker.totalEarnedFormatted = (merged.tasker.totalEarned / 100).toFixed(2);
+        merged.tasker.totalWithdrawnFormatted = (merged.tasker.totalWithdrawn / 100).toFixed(2);
+        merged.tasker.totalTaxesPaidFormatted = (merged.tasker.totalTaxesPaid / 100).toFixed(2);
+        
+        // Calculate average earning if we have contracts
+        if (merged.tasker.totalContracts > 0) {
+          merged.tasker.averageEarning = merged.tasker.totalEarned / merged.tasker.totalContracts;
+          merged.tasker.averageEarningFormatted = (merged.tasker.averageEarning / 100).toFixed(2);
+        }
+      }
+    });
+
+    return merged;
   }
 }
 

@@ -4,6 +4,7 @@ import User from '../../src/models/User.js';
 import Contract from '../../src/models/Contract.js';
 import { Gig } from '../../src/models/Gig.js';
 import NuveiPayment from '../../src/models/NuveiPayment.js';
+import Payment from '../../src/models/Payment.js';
 
 describe('Nuvei Payment Integration Tests', () => {
   let provider, tasker, admin, providerToken, taskerToken, adminToken, gig, contract;
@@ -370,7 +371,8 @@ describe('Nuvei Payment Integration Tests', () => {
       expect(res.body.data).toHaveProperty('summary');
       expect(res.body.data.summary).toHaveProperty('period');
       expect(res.body.data.summary).toHaveProperty('currency');
-      expect(res.body.data.summary).toHaveProperty('paymentProvider');
+      // Note: consolidated summary combines both Stripe and Nuvei, so it doesn't have a single paymentProvider
+      // Individual payments have paymentProvider field ('stripe' or 'nuvei')
     });
 
     it('should get payment statistics', async () => {

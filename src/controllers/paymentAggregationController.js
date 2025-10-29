@@ -50,7 +50,11 @@ export const getConsolidatedEarningsSummary = catchAsync(async (req, res, next) 
 
     res.status(200).json({
       status: 'success',
-      data: result
+      data: {
+        summary: result.summary, // Extract the summary property from the result
+        period: result.period,
+        currencies: result.currencies
+      }
     });
   } catch (error) {
     return next(new AppError(`Failed to get consolidated earnings summary: ${error.message}`, 500));

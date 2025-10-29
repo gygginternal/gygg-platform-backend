@@ -28,10 +28,11 @@ class StripePaymentService {
       if (contract.provider._id.toString() !== providerId)
         throw new AppError("Not authorized to pay for this contract.", 403);
 
-      // Ensure that the provider has connected their Stripe account
+      // Ensure that the provider has connected either their Stripe or Nuvei account
       const provider = await User.findById(providerId);
-      if (!provider.stripeAccountId)
-        throw new AppError("Provider must connect their Stripe account before making payments.", 400);
+      // Note: Provider payment account is not required at this stage
+      // They will choose their payment method (Stripe or Nuvei) on the payment page
+      // and set up their account if needed at that time
 
       // Ensure that the contract is in a valid status for payment
       if (!["active", "submitted", "failed"].includes(contract.status)) {

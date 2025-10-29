@@ -23,7 +23,7 @@ router.patch(
     restrictTo("provider"), // Only providers can accept applications
     param("applicationId")
       .isMongoId()
-      .withMessage("Invalid Application ID format"), // Validate application ID
+      .withMessage("Invalid Application ID format. Must be a valid MongoDB ObjectId."),
   ],
   validateRequest,
   acceptApplication // Calls the controller to handle acceptance
@@ -35,7 +35,7 @@ router.patch(
   [
     param("applicationId")
       .isMongoId()
-      .withMessage("Invalid Application ID format"), // Validate application ID
+      .withMessage("Invalid Application ID format. Must be a valid MongoDB ObjectId."), // Validate application ID
   ],
   validateRequest,
   rejectApplication // Calls the controller to handle rejection
@@ -48,7 +48,7 @@ router.patch(
     restrictTo("tasker"), // Only taskers can cancel their applications
     param("applicationId")
       .isMongoId()
-      .withMessage("Invalid Application ID format"), // Validate application ID
+      .withMessage("Invalid Application ID format. Must be a valid MongoDB ObjectId."), // Validate application ID
   ],
   validateRequest,
   cancelApplication // Calls the controller to handle cancellation

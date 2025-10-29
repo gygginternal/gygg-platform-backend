@@ -94,6 +94,13 @@ const contractSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+
+    // Payment status for tracking payment flow
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'paid', 'failed', 'refunded'],
+      default: 'pending',
+    },
   },
   { timestamps: true }
 ); // Automatically adds createdAt and updatedAt

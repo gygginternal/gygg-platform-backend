@@ -121,6 +121,41 @@ export const topMatchGigs = catchAsync(async (req, res, next) => {
     },
   });
 
+  // Lookup applications to check if tasker has already applied
+  pipeline.push({
+    $lookup: {
+      from: "applications", // MongoDB collection for applications
+      localField: "_id",
+      foreignField: "gig",
+      as: "applications",
+    },
+  });
+
+  // Filter out gigs where the tasker has already applied
+  pipeline.push({
+    $match: {
+      $or: [
+        { applications: { $size: 0 } }, // No applications yet
+        { 
+          applications: {
+            $not: {
+              $elemMatch: {
+                user: taskerId
+              }
+            }
+          }
+        } // Tasker hasn't applied to this gig
+      ]
+    }
+  });
+
+  // Remove the applications field as it's no longer needed
+  pipeline.push({
+    $project: {
+      applications: 0
+    }
+  });
+
   // Lookup the user who posted the gig
   pipeline.push({
     $lookup: {

@@ -18,6 +18,8 @@ import {
   handleNuveiWebhook,
   nuveiDemoResponse,
   nuveiDefaultCancel,
+  createNuveiSimplyConnectSession,
+  confirmNuveiSimplyConnectPayment,
 } from "../controllers/nuveiPaymentController.js";
 import { protect, restrictTo } from "../controllers/authController.js";
 
@@ -35,6 +37,21 @@ router.get("/nuvei/default-cancel", nuveiDefaultCancel);
  * All routes below this middleware require the user to be logged in.
  */
 router.use(protect); // Protect all routes below this middleware (user must be logged in)
+
+// --- Nuvei General Payment Routes ---
+// Route to create a payment session for contracts (can handle both traditional Nuvei and Simply Connect)
+router.post(
+  "/create-session",
+  [
+    restrictTo("provider"), // Only providers can create payments
+    body("contractId").isMongoId().withMessage("Invalid Contract ID format"),
+    body("amount").optional().isFloat({ min: 0.01 }).withMessage("Valid amount (minimum $0.01) is required"),
+    body("currency").optional().isLength({ min: 3, max: 3 }).withMessage("Currency must be 3 characters"),
+    body("paymentMethod").optional().isIn(["card", "instadebit", "ach", "bank_transfer"]).withMessage("Invalid payment method. Supported: card, instadebit, ach, bank_transfer"),
+  ],
+  validateRequest,
+  createNuveiSimplyConnectSession // Default to Simply Connect for new implementations
+);
 
 // --- Nuvei Payment Routes ---
 // These routes handle the creation of payment sessions and refunds for contracts using Nuvei.
@@ -56,7 +73,7 @@ router.post(
 
 // Route to get Nuvei payment session details
 router.get(
-  "/nuvei/session/:sessionId",
+  "/session/:sessionId",
   [
     param("sessionId").notEmpty().withMessage("Session ID is required"),
   ],
@@ -66,7 +83,7 @@ router.get(
 
 // Route to confirm Nuvei payment completion
 router.post(
-  "/nuvei/confirm-payment",
+  "/confirm-payment",
   [
     body("nuveiTransactionId").optional().isString().withMessage("Invalid Nuvei transaction ID"),
     body("sessionId").optional().isString().withMessage("Invalid session ID"),
@@ -77,7 +94,7 @@ router.post(
 
 // Route to verify a Nuvei transaction
 router.get(
-  "/nuvei/verify-transaction/:transactionId",
+  "/verify-transaction/:transactionId",
   [
     param("transactionId").notEmpty().withMessage("Transaction ID is required"),
   ],
@@ -90,7 +107,7 @@ router.get(
 
 // Route to process Nuvei withdrawal
 router.post(
-  "/nuvei/withdraw",
+  "/withdraw",
   [
     restrictTo("tasker"), // Only taskers can withdraw via Nuvei
     body("amount")
@@ -103,7 +120,7 @@ router.post(
 
 // Route to get Nuvei withdrawal history
 router.get(
-  "/nuvei/withdrawal-history",
+  "/withdrawal-history",
   [
     restrictTo("tasker"), // Only taskers can view their Nuvei withdrawal history
     query("page")
@@ -126,7 +143,7 @@ router.get(
 
 // Route to get Nuvei payment history
 router.get(
-  "/nuvei/payment-history",
+  "/payment-history",
   [
     restrictTo("provider", "tasker"), // Both can view their payment history
     query("type")
@@ -154,7 +171,7 @@ router.get(
 
 // Route to get Nuvei earnings summary
 router.get(
-  "/nuvei/earnings-summary",
+  "/earnings-summary",
   [
     restrictTo("provider", "tasker"), // Both can view their earnings summary
     query("period")
@@ -179,7 +196,7 @@ router.get(
 
 // Route to start Nuvei onboarding process
 router.post(
-  "/nuvei/start-onboarding",
+  "/start-onboarding",
   [
     restrictTo("tasker", "provider"), // Both can start Nuvei onboarding
   ],
@@ -187,9 +204,35 @@ router.post(
   startNuveiOnboarding
 );
 
+// --- Nuvei Simply Connect Routes ---
+// Route to create a Simply Connect payment session for contracts
+router.post(
+  "/create-simply-connect-session",
+  [
+    restrictTo("provider"), // Only providers can create payments
+    body("contractId").isMongoId().withMessage("Invalid Contract ID format"),
+    body("amount").isFloat({ min: 0.01 }).withMessage("Valid amount (minimum $0.01) is required"),
+    body("currency").optional().isLength({ min: 3, max: 3 }).withMessage("Currency must be 3 characters"),
+  ],
+  validateRequest,
+  createNuveiSimplyConnectSession
+);
+
+// Route to confirm Simply Connect payment completion
+router.post(
+  "/confirm-simply-connect-payment",
+  [
+    restrictTo("provider"), // Only providers can confirm payments
+    body("contractId").isMongoId().withMessage("Invalid Contract ID format"),
+    body("transactionId").notEmpty().withMessage("Transaction ID is required"),
+  ],
+  validateRequest,
+  confirmNuveiSimplyConnectPayment
+);
+
 // Route to check Nuvei onboarding status
 router.get(
-  "/nuvei/onboarding-status",
+  "/onboarding-status",
   [
     restrictTo("tasker", "provider"), // Both can check their onboarding status
   ],
@@ -199,7 +242,7 @@ router.get(
 
 // Route to set default payment method
 router.patch(
-  "/nuvei/default-payment-method",
+  "/default-payment-method",
   [
     restrictTo("tasker", "provider"), // Both can set their default payment method
     body("defaultPaymentMethod")
@@ -212,7 +255,7 @@ router.patch(
 
 // Route to get all payment methods for user
 router.get(
-  "/nuvei/user-payment-methods",
+  "/user-payment-methods",
   [
     restrictTo("tasker", "provider"), // Both can get their payment methods
   ],
@@ -222,7 +265,7 @@ router.get(
 
 // Route to get Nuvei balance
 router.get(
-  "/nuvei/balance",
+  "/balance",
   [
     restrictTo("tasker", "provider"), // Both can check their Nuvei balance
   ],

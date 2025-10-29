@@ -1,5 +1,5 @@
-import redisClient from '../config/redis.js';
-import logger from './logger.js';
+const redisClient = require('../config/redis.js');
+const logger = require('./logger.js');
 
 // Valkey-based cache with fallback handling (using Redis client - Valkey is API compatible)
 class RedisCache {
@@ -80,7 +80,7 @@ class RedisCache {
 const cache = new RedisCache();
 
 // Valkey cache middleware for Express (using Redis client - Valkey is API compatible)
-export const cacheMiddleware = (ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
+const cacheMiddleware = (ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
   return async (req, res, next) => {
     // Only cache GET requests
     if (req.method !== 'GET') {
@@ -126,76 +126,76 @@ export const cacheMiddleware = (ttl = parseInt(process.env.VALKEY_TTL || process
 };
 
 // Specific caching functions for your data
-export const cacheUserData = async (userId, data, ttl = parseInt(process.env.VALKEY_USER_TTL || process.env.REDIS_USER_TTL || '600')) => {
+const cacheUserData = async (userId, data, ttl = parseInt(process.env.VALKEY_USER_TTL || process.env.REDIS_USER_TTL || '600')) => {
   const key = `user:${userId}`;
   await cache.set(key, data, ttl);
   logger.debug('User data cached (Valkey)', { userId, key, ttl });
 };
 
-export const getCachedUserData = async (userId) => {
+const getCachedUserData = async (userId) => {
   const key = `user:${userId}`;
   return await cache.get(key);
 };
 
-export const invalidateUserCache = async (userId) => {
+const invalidateUserCache = async (userId) => {
   const key = `user:${userId}`;
   await cache.del(key);
   logger.debug('User cache invalidated (Valkey)', { userId, key });
 };
 
-export const cacheGigData = async (gigId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
+const cacheGigData = async (gigId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
   const key = `gig:${gigId}`;
   await cache.set(key, data, ttl);
   logger.debug('Gig data cached (Valkey)', { gigId, key, ttl });
 };
 
-export const getCachedGigData = async (gigId) => {
+const getCachedGigData = async (gigId) => {
   const key = `gig:${gigId}`;
   return await cache.get(key);
 };
 
-export const invalidateGigCache = async (gigId) => {
+const invalidateGigCache = async (gigId) => {
   const key = `gig:${gigId}`;
   await cache.del(key);
   logger.debug('Gig cache invalidated (Valkey)', { gigId, key });
 };
 
-export const cacheContractData = async (contractId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
+const cacheContractData = async (contractId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
   const key = `contract:${contractId}`;
   await cache.set(key, data, ttl);
   logger.debug('Contract data cached (Valkey)', { contractId, key, ttl });
 };
 
-export const getCachedContractData = async (contractId) => {
+const getCachedContractData = async (contractId) => {
   const key = `contract:${contractId}`;
   return await cache.get(key);
 };
 
-export const invalidateContractCache = async (contractId) => {
+const invalidateContractCache = async (contractId) => {
   const key = `contract:${contractId}`;
   await cache.del(key);
   logger.debug('Contract cache invalidated (Valkey)', { contractId, key });
 };
 
-export const cachePostData = async (postId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
+const cachePostData = async (postId, data, ttl = parseInt(process.env.VALKEY_TTL || process.env.REDIS_TTL || '300')) => {
   const key = `post:${postId}`;
   await cache.set(key, data, ttl);
   logger.debug('Post data cached (Valkey)', { postId, key, ttl });
 };
 
-export const getCachedPostData = async (postId) => {
+const getCachedPostData = async (postId) => {
   const key = `post:${postId}`;
   return await cache.get(key);
 };
 
-export const invalidatePostCache = async (postId) => {
+const invalidatePostCache = async (postId) => {
   const key = `post:${postId}`;
   await cache.del(key);
   logger.debug('Post cache invalidated (Valkey)', { postId, key });
 };
 
 // Clear all cache (use carefully in production)
-export const clearAllCache = async () => {
+const clearAllCache = async () => {
   try {
     await redisClient.flushAll();
     logger.info('All Valkey cache cleared');
@@ -205,11 +205,11 @@ export const clearAllCache = async () => {
 };
 
 // Get cache statistics
-export const getCacheStats = () => {
+const getCacheStats = () => {
   return cache.getStats();
 };
 
-export default {
+module.exports = {
   cache,
   cacheMiddleware,
   cacheUserData,

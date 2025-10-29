@@ -1,4 +1,3 @@
-// backend/src/utils/email.js
 import nodemailer from 'nodemailer';
 import logger from './logger.js'; // Your Winston logger
 

@@ -25,6 +25,7 @@ const notificationSchema = new mongoose.Schema({
       'system',
       'contract_accepted',
       'payment_received',
+      'work_approved',
     ],
   },
   message: {

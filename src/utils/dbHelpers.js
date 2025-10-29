@@ -10,7 +10,7 @@ import logger from './logger.js';
  * @returns {Promise<Document>} The found document
  * @throws {AppError} If document not found or invalid ID
  */
-export const findDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
+const findDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
@@ -32,7 +32,7 @@ export const findDocumentById = async (Model, id, errorMessage = 'Document not f
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The found document with populated fields
  */
-export const findDocumentByIdWithPopulate = async (Model, id, populateFields, errorMessage = 'Document not found', timeoutMs = 10000) => {
+const findDocumentByIdWithPopulate = async (Model, id, populateFields, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
@@ -54,7 +54,7 @@ export const findDocumentByIdWithPopulate = async (Model, id, populateFields, er
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The updated document
  */
-export const updateDocumentById = async (Model, id, updateData, options = { new: true, runValidators: true }, errorMessage = 'Document not found', timeoutMs = 10000) => {
+const updateDocumentById = async (Model, id, updateData, options = { new: true, runValidators: true }, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
@@ -74,7 +74,7 @@ export const updateDocumentById = async (Model, id, updateData, options = { new:
  * @param {string} errorMessage - Custom error message
  * @returns {Promise<Document>} The deleted document
  */
-export const deleteDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
+const deleteDocumentById = async (Model, id, errorMessage = 'Document not found', timeoutMs = 10000) => {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new AppError('Invalid ID format', 400);
   }
@@ -92,7 +92,7 @@ export const deleteDocumentById = async (Model, id, errorMessage = 'Document not
  * @param {Function} operations - Async function containing operations to execute
  * @returns {Promise<any>} Result of the operations
  */
-export const withTransaction = async (operations) => {
+const withTransaction = async (operations) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   
@@ -118,7 +118,7 @@ export const withTransaction = async (operations) => {
  * @param {string} errorMessage - Custom error message
  * @throws {AppError} If user doesn't have permission
  */
-export const checkResourceOwnership = (resource, userId, resourceField = 'user', errorMessage = 'Access denied') => {
+const checkResourceOwnership = (resource, userId, resourceField = 'user', errorMessage = 'Access denied') => {
   const resourceOwnerId = resource[resourceField]?.toString() || resource[resourceField];
   if (resourceOwnerId !== userId.toString()) {
     throw new AppError(errorMessage, 403);
@@ -132,7 +132,7 @@ export const checkResourceOwnership = (resource, userId, resourceField = 'user',
  * @param {number} limit - Items per page (default: 10)
  * @returns {Object} Paginated results with metadata
  */
-export const paginateResults = async (query, page = 1, limit = 10, timeoutMs = 10000) => {
+const paginateResults = async (query, page = 1, limit = 10, timeoutMs = 10000) => {
   const skip = (page - 1) * limit;
   // Add timeout to both the main query and count query
   const resultsPromise = query.skip(skip).limit(limit).maxTimeMS(timeoutMs);
@@ -151,4 +151,14 @@ export const paginateResults = async (query, page = 1, limit = 10, timeoutMs = 1
       hasPrev: page > 1
     }
   };
+};
+
+export {
+    findDocumentById,
+    findDocumentByIdWithPopulate,
+    updateDocumentById,
+    deleteDocumentById,
+    withTransaction,
+    checkResourceOwnership,
+    paginateResults
 };

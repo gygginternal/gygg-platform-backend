@@ -8,9 +8,7 @@ import {
   updateDocumentById, 
   deleteDocumentById, 
   paginateResults 
-} from '../src/utils/dbHelpers.js';
-
-describe('Phase 3: Database Query Optimization Tests', () => {
+} from '../../src/utils/dbHelpers.js';describe('Phase 3: Database Query Optimization Tests', () => {
   let server;
   let testUser;
 

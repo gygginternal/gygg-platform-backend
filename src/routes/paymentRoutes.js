@@ -263,51 +263,7 @@ router.get(
   getOnboardingRequirements
 );
 
-// Nuvei payment routes
-router.post(
-  "/nuvei/create-session",
-  [
-    restrictTo("provider"), // Only providers can initiate payments
-  ],
-  validateRequest,
-  createNuveiPaymentSession
-);
 
-router.get(
-  "/nuvei/session/:sessionId",
-  [
-    restrictTo("provider", "tasker"), // Both can check session status
-  ],
-  validateRequest,
-  getNuveiPaymentSession
-);
-
-router.post(
-  "/nuvei/confirm-payment",
-  [
-    restrictTo("provider"), // Only the provider can confirm payment
-  ],
-  validateRequest,
-  confirmNuveiPayment
-);
-
-// Webhook endpoint for Nuvei payment confirmations
-router.post(
-  "/webhook/nuvei",
-  // No authentication needed as this is a webhook from Nuvei
-  handleNuveiWebhook
-);
-
-// Route to create Nuvei payment intent for a specific contract
-router.post(
-  "/contracts/:contractId/create-nuvei-payment",
-  [
-    restrictTo("provider"), // Only the provider can create a payment
-    param("contractId").isMongoId().withMessage("Invalid Contract ID format"), // Validate contractId as MongoDB ObjectId
-  ],
-  validateRequest,
-  createNuveiPaymentSession
-);
 
 // Aggregated Payment Routes - Unified dashboard functionality
 // Unified payment history from both systems
@@ -354,25 +310,7 @@ router.get(
 
 // --- Nuvei Onboarding Routes ---
 
-// Start Nuvei onboarding process
-router.post(
-  "/nuvei/start-onboarding",
-  [
-    restrictTo("tasker", "provider"), // Both taskers and providers can connect Nuvei
-  ],
-  validateRequest,
-  startNuveiOnboarding
-);
 
-// Check Nuvei onboarding status
-router.get(
-  "/nuvei/onboarding-status",
-  [
-    restrictTo("tasker", "provider"), // Both can check their status
-  ],
-  validateRequest,
-  checkNuveiOnboardingStatus
-);
 
 // Set default payment method
 router.patch(
@@ -396,6 +334,8 @@ router.get(
   validateRequest,
   getUserPaymentMethods
 );
+
+
 
 // Mount Nuvei payment routes
 router.use("/nuvei", nuveiPaymentRoutes);

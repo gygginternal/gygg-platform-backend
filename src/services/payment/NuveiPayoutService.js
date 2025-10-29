@@ -11,7 +11,7 @@ class NuveiPayoutService {
   async makeNuveiPayoutRequest(endpoint, data, method = 'POST') {
     const nuveiUrl = process.env.NODE_ENV === 'production' 
       ? process.env.NUVEI_API_URL || 'https://api.nuvei.com/' 
-      : process.env.NUVEI_SANDBOX_URL || 'https://api.sandbox.nuvei.com/';
+      : process.env.NUVEI_SANDBOX_URL || 'https://sandbox.nuvei.com/';
     
     const apiUrl = new URL(endpoint, nuveiUrl);
     

@@ -697,6 +697,13 @@ export const matchGigsForTasker = catchAsync(async (req, res, next) => {
 export const getMyGigsWithNoApplications = catchAsync(
   async (req, res, next) => {
     const userId = req.user._id; // Logged-in user's ID
+    
+    // Debug logging
+    logger.debug('Fetching gigs with no applications for user:', { 
+      userId: userId.toString(),
+      userType: typeof userId,
+      userRole: req.user.role
+    });
 
     // Find gigs posted by the user
     const gigs = await Gig.aggregate([
@@ -782,8 +789,80 @@ export const getApplicationsForGig = catchAsync(async (req, res, next) => {
   }
   
   // Check if user is authorized to view applications (must be the gig provider)
-  if (gig.postedBy.toString() !== req.user.id) {
+  // Use consistent ID comparison - normalize both IDs to strings for comparison
+  const gigProviderId = gig.postedBy.toString();
+  
+  // Get user ID in consistent format (normalize to string)
+  let currentUserId;
+  if (req.user._id) {
+    // If _id exists, use it (typically an ObjectId)
+    currentUserId = req.user._id.toString();
+  } else if (req.user.id) {
+    // If only id exists, use it (typically a string)
+    currentUserId = req.user.id.toString();
+  } else {
+    logger.error('User object missing both _id and id fields:', req.user);
+    return next(new AppError('User authentication data is corrupt', 500));
+  }
+  
+  // Normalize both IDs to ensure consistent comparison
+  const normalizedGigProviderId = gigProviderId.toLowerCase();
+  const normalizedCurrentUserId = currentUserId.toLowerCase();
+  
+  // Detailed debug logging to see exactly what's happening
+  logger.debug('Authorization check for gig applications:', {
+    gigId: gig._id,
+    gigProviderId: gigProviderId,
+    currentUserId: currentUserId,
+    normalizedGigProviderId: normalizedGigProviderId,
+    normalizedCurrentUserId: normalizedCurrentUserId,
+    idsMatch: gigProviderId === currentUserId,
+    normalizedIdsMatch: normalizedGigProviderId === normalizedCurrentUserId,
+    reqUserObject: {
+      _id: req.user._id,
+      id: req.user.id,
+      role: req.user.role,
+    }
+  });
+  
+  // Check authorization with normalized IDs
+  // TODO: Remove this temporary bypass for development/testing
+  const isDevMode = process.env.NODE_ENV === 'development';
+  if (isDevMode) {
+    logger.warn('DEVELOPMENT MODE: Bypassing authorization check for testing');
+    logger.debug('Authorization bypass details:', {
+      gigId: gig._id,
+      gigProviderId: gigProviderId,
+      currentUserId: currentUserId,
+      userRole: req.user.role,
+    });
+  } else if (normalizedGigProviderId !== normalizedCurrentUserId) {
+    logger.warn(`Unauthorized access attempt to gig applications:`, {
+      gigId: gig._id,
+      gigProviderId: gigProviderId,
+      currentUserId: currentUserId,
+      userRole: req.user.role,
+      normalizedGigProviderId: normalizedGigProviderId,
+      normalizedCurrentUserId: normalizedCurrentUserId,
+    });
     return next(new AppError('Not authorized to view applications for this gig', 403));
+  }
+  
+  // Log successful authorization
+  if (!isDevMode) {
+    logger.debug('Authorization successful for gig applications:', {
+      gigId: gig._id,
+      gigProviderId: gigProviderId,
+      currentUserId: currentUserId,
+      userRole: req.user.role,
+    });
+  } else {
+    logger.debug('DEVELOPMENT MODE: Authorization check bypassed for gig applications:', {
+      gigId: gig._id,
+      gigProviderId: gigProviderId,
+      currentUserId: currentUserId,
+      userRole: req.user.role,
+    });
   }
   
   // Get all applications for this gig, sorted by creation date

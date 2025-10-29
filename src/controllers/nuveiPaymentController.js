@@ -104,7 +104,7 @@ export const processNuveiWithdrawal = catchAsync(async (req, res, next) => {
   }
 
   try {
-    const result = await nuveiPaymentService.processWithdrawal(userId, amount);
+    const result = await nuveiPaymentService.processNuveiWithdrawal(userId, amount);
     
     if (!result.success) {
       return next(new AppError(result.error, 400));
@@ -274,49 +274,74 @@ export const getNuveiWithdrawalHistory = catchAsync(async (req, res, next) => {
 // --- Handle Nuvei webhook ---
 export const handleNuveiWebhook = catchAsync(async (req, res, next) => {
   const payload = req.body;
-  const sig = req.headers['x-nuvei-signature'];
 
   try {
-    // Log the received webhook for debugging
     logger.info('Nuvei webhook received:', JSON.stringify(payload, null, 2));
 
-    // Handle different event types
-    const eventType = payload.type || payload.event_type || 'unknown';
-    const transactionId = payload.transactionId || payload.txnId || payload.id;
+    const eventType = payload.event || payload.type;
+    const transactionId = payload.transactionId || payload.transaction_id;
+
+    if (!transactionId) {
+      logger.warn('Nuvei webhook missing transaction ID');
+      return res.status(400).json({ error: 'Webhook error', message: 'Transaction ID missing' });
+    }
+
+    const payment = await NuveiPayment.findOne({ nuveiTransactionId: transactionId });
+
+    if (!payment) {
+      logger.warn(`Nuvei payment not found for transaction: ${transactionId}`);
+      return res.status(404).json({ error: 'Webhook error', message: 'Payment not found' });
+    }
 
     switch (eventType) {
-      case 'payment_success':
-      case 'payment.succeeded':
-        // Handle successful payment
-        logger.info(`Nuvei payment succeeded: ${transactionId}`);
-        // Update payment status in database
+      case 'payment':
+        if (payload.status === 'SUCCESS') {
+          payment.status = 'succeeded';
+          payment.succeededAt = new Date();
+          if (payment.contract) {
+            const contract = await Contract.findById(payment.contract);
+            if (contract) {
+              contract.status = 'completed';
+              contract.paymentStatus = 'paid';
+              await contract.save();
+            }
+          }
+        } else if (payload.status === 'FAIL') {
+          payment.status = 'failed';
+          payment.failureReason = payload.reason;
+        }
         break;
-        
-      case 'payment_failed':
-      case 'payment.failed':
-        // Handle failed payment
-        logger.error(`Nuvei payment failed: ${transactionId}`);
-        // Update payment status in database
-        break;
-        
-      case 'refund_completed':
       case 'refund.completed':
-        // Handle completed refund
-        logger.info(`Nuvei refund completed: ${transactionId}`);
-        // Update payment status in database
+        payment.status = 'refunded';
         break;
-        
-      case 'bank_transfer_completed':
       case 'payout.completed':
-        // Handle completed bank transfer/payout
-        logger.info(`Nuvei bank transfer completed: ${transactionId}`);
-        // Update withdrawal status in database
+        payment.status = 'paid';
         break;
-        
+      case 'instadebit.payment.initiated':
+        payment.status = 'pending';
+        break;
+      case 'instadebit.payment.completed':
+        payment.status = 'succeeded';
+        payment.succeededAt = new Date();
+        if (payment.contract) {
+          const contract = await Contract.findById(payment.contract);
+          if (contract) {
+            contract.status = 'completed';
+            contract.paymentStatus = 'paid';
+            await contract.save();
+          }
+        }
+        break;
+      case 'instadebit.payment.failed':
+        payment.status = 'failed';
+        payment.failureReason = payload.reason;
+        break;
       default:
         logger.warn(`Unhandled Nuvei event type: ${eventType}`);
         break;
     }
+
+    await payment.save();
 
     res.status(200).json({ received: true });
   } catch (error) {
@@ -374,6 +399,69 @@ export const nuveiDemoResponse = catchAsync(async (req, res, next) => {
     </body>
     </html>
   `);
+});
+
+// --- Nuvei Simply Connect Payment Handlers ---
+
+// Create a Nuvei Simply Connect payment session for a contract
+export const createNuveiSimplyConnectSession = catchAsync(async (req, res, next) => {
+  const providerId = req.user.id;
+  const { contractId, amount, currency = 'CAD' } = req.body;
+
+  try {
+    let result;
+    
+    // Check if amount is provided (custom amount) or we should calculate from contract
+    if (amount !== undefined && amount !== null) {
+      // Use provided amount and currency for Simply Connect
+      result = await nuveiPaymentService.createSimplyConnectSession(
+        contractId, 
+        providerId, 
+        parseFloat(amount), 
+        currency
+      );
+    } else {
+      // Calculate amount from contract data (legacy pattern)
+      // This matches the traditional createPaymentSession pattern
+      result = await nuveiPaymentService.createPaymentSession(
+        contractId, 
+        providerId, 
+        'card' // Default to card for Simply Connect
+      );
+    }
+    
+    res.status(200).json({
+      status: "success",
+      data: result,
+    });
+  } catch (error) {
+    logger.error('Error creating Nuvei Simply Connect session:', error);
+    return next(new AppError(`Failed to create Nuvei Simply Connect session: ${error.message}`, 500));
+  }
+});
+
+// Confirm Simply Connect payment completion
+export const confirmNuveiSimplyConnectPayment = catchAsync(async (req, res, next) => {
+  const providerId = req.user.id;
+  const { contractId, transactionId, paymentResult } = req.body;
+
+  try {
+    // Use the service method to confirm the Simply Connect payment
+    const result = await nuveiPaymentService.confirmSimplyConnectPayment(
+      contractId, 
+      providerId, 
+      transactionId, 
+      paymentResult
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: result,
+    });
+  } catch (error) {
+    logger.error('Error confirming Nuvei Simply Connect payment:', error);
+    return next(new AppError(`Failed to confirm Nuvei Simply Connect payment: ${error.message}`, 500));
+  }
 });
 
 // --- Nuvei Default Cancel Handler ---

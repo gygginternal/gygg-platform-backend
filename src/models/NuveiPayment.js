@@ -110,7 +110,10 @@ const nuveiPaymentSchema = new mongoose.Schema(
     // --- Nuvei Specific Fields ---
     nuveiSessionId: {
       type: String,
-      required: true,
+      required: function() {
+        // Only required for completed or processed statuses
+        return ['succeeded', 'failed', 'processing', 'refunded', 'cancelled'].includes(this.status);
+      },
       index: true,
     },
     nuveiTransactionId: {
@@ -124,15 +127,24 @@ const nuveiPaymentSchema = new mongoose.Schema(
     },
     nuveiMerchantId: {
       type: String,
-      required: true,
+      required: function() {
+        // Only required for completed or processed statuses
+        return ['succeeded', 'failed', 'processing', 'refunded', 'cancelled'].includes(this.status);
+      },
     },
     nuveiMerchantSiteId: {
       type: String,
-      required: true,
+      required: function() {
+        // Only required for completed or processed statuses
+        return ['succeeded', 'failed', 'processing', 'refunded', 'cancelled'].includes(this.status);
+      },
     },
     nuveiOrderId: {
       type: String,
-      required: true,
+      required: function() {
+        // Only required for completed or processed statuses
+        return ['succeeded', 'failed', 'processing', 'refunded', 'cancelled'].includes(this.status);
+      },
     },
     nuveiPaymentMethod: {
       type: String,
@@ -173,6 +185,12 @@ const nuveiPaymentSchema = new mongoose.Schema(
       type: Number,
       required: true,
       default: 0,
+    },
+    
+    // Flag to indicate if this payment was created using Nuvei Simply Connect
+    isSimplyConnect: {
+      type: Boolean,
+      default: false,
     },
   },
   {

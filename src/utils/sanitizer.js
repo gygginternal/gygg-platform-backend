@@ -5,7 +5,7 @@ import sanitizeHtml from 'sanitize-html';
  * @param {string} text - Text to sanitize
  * @returns {string} - Sanitized text
  */
-export const sanitizeText = (text) => {
+const sanitizeText = (text) => {
   if (!text || typeof text !== 'string') return text;
 
   // First apply basic XSS sanitization using sanitize-html
@@ -32,7 +32,7 @@ export const sanitizeText = (text) => {
  * @param {string} text - Rich text to sanitize
  * @returns {string} - Sanitized rich text
  */
-export const sanitizeRichText = (text) => {
+const sanitizeRichText = (text) => {
   if (!text || typeof text !== 'string') return text;
 
   return sanitizeHtml(text, {
@@ -56,7 +56,7 @@ export const sanitizeRichText = (text) => {
  * @param {string} type - Type of content ('text', 'html', etc.)
  * @returns {string} - Sanitized content
  */
-export const sanitizeMessageContent = (content, type = 'text') => {
+const sanitizeMessageContent = (content, type = 'text') => {
   if (!content || typeof content !== 'string') return content;
 
   switch (type) {
@@ -73,7 +73,7 @@ export const sanitizeMessageContent = (content, type = 'text') => {
  * @param {any} input - Input to sanitize
  * @returns {any} - Sanitized input
  */
-export const sanitizeInput = (input) => {
+const sanitizeInput = (input) => {
   if (typeof input === 'string') {
     // Sanitize string inputs
     return sanitizeText(input);
@@ -95,7 +95,7 @@ export const sanitizeInput = (input) => {
 /**
  * Comprehensive XSS protection patterns
  */
-export const xssPatterns = [
+const xssPatterns = [
   // JavaScript event handlers
   /on\w+\s*=/gi,
   // JavaScript protocols
@@ -120,3 +120,11 @@ export const xssPatterns = [
   /<\s*applet[^>]*>.*?<\s*\/\s*applet\s*>/gi,
   /<\s*form[^>]*>.*?<\s*\/\s*form\s*>/gi
 ];
+
+export {
+  sanitizeText,
+  sanitizeRichText,
+  sanitizeMessageContent,
+  sanitizeInput,
+  xssPatterns,
+};

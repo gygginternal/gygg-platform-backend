@@ -184,7 +184,7 @@ const normalizeText = (text) => {
  * @param {string} text - The text to check
  * @returns {object} - Result object with isClean, violations, and cleanedText
  */
-export const filterContent = (text) => {
+const filterContent = (text) => {
   if (!text || typeof text !== 'string') {
     return { isClean: true, violations: [], cleanedText: text };
   }
@@ -260,7 +260,7 @@ export const filterContent = (text) => {
  * @param {string} text - The text to check
  * @returns {boolean} - True if content should be blocked
  */
-export const shouldBlockContent = (text) => {
+const shouldBlockContent = (text) => {
   const result = filterContent(text);
   
   // Block if high severity or contains hate speech
@@ -290,7 +290,7 @@ export const shouldBlockContent = (text) => {
  * @param {Array} violations - Array of violation words
  * @returns {string} - User-friendly error message
  */
-export const getViolationMessage = (violations) => {
+const getViolationMessage = (violations) => {
   if (violations.length === 0) return '';
   
   // Check for off-platform transaction violations first (highest priority)
@@ -374,7 +374,6 @@ const initializeRekognition = async () => {
   }
   try {
     if (process.env.AWS_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-      const { RekognitionClient } = await import('@aws-sdk/client-rekognition');
       rekognitionClient = new RekognitionClient({
         region: process.env.AWS_REGION,
         credentials: {
@@ -399,7 +398,7 @@ const initializeRekognition = async () => {
  * @param {number} minConfidence - Minimum confidence threshold (default: 60)
  * @returns {object} - Analysis result with moderation labels
  */
-export const analyzeImageContent = async (s3Key, minConfidence = 60) => {
+const analyzeImageContent = async (s3Key, minConfidence = 60) => {
   await initializeRekognition();
   // Check if image moderation is enabled
   if (process.env.ENABLE_IMAGE_MODERATION !== 'true') {
@@ -428,7 +427,6 @@ export const analyzeImageContent = async (s3Key, minConfidence = 60) => {
   }
 
   try {
-    const { DetectModerationLabelsCommand } = await import('@aws-sdk/client-rekognition');
     const command = new DetectModerationLabelsCommand({
       Image: {
         S3Object: {
@@ -523,7 +521,7 @@ const getSeverityLevel = (violations) => {
  * @param {string} context - Context where image is being used (chat, post, profile)
  * @returns {string} - User-friendly error message
  */
-export const getImageViolationMessage = (violations, context = 'shared') => {
+const getImageViolationMessage = (violations, context = 'shared') => {
   if (!violations || violations.length === 0) return '';
 
   const categories = violations.map(v => v.category);
@@ -556,7 +554,7 @@ export const getImageViolationMessage = (violations, context = 'shared') => {
  * @param {object} analysisResult - Result from analyzeImageContent
  * @returns {boolean} - True if image should be blocked
  */
-export const shouldBlockImage = (analysisResult) => {
+const shouldBlockImage = (analysisResult) => {
   if (!analysisResult || analysisResult.isAppropriate) return false;
   
   // Block high severity violations or multiple medium confidence violations
@@ -734,4 +732,13 @@ const checkOffPlatformAttempts = (text) => {
   }
 
   return { violations, categories, regexMatches };
+};
+
+export {
+  filterContent,
+  shouldBlockContent,
+  getViolationMessage,
+  analyzeImageContent,
+  getImageViolationMessage,
+  shouldBlockImage,
 };

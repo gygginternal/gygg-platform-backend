@@ -262,10 +262,13 @@ app.post(
   stripeWebhookHandler
 );
 
+import { verifyNuveiSignature } from "./middleware/nuveiSignature.js";
+
 // --- Nuvei Webhook Handler (needs raw body) ---
 app.post(
   "/api/v1/payments/webhook/nuvei",
   express.raw({ type: "application/json" }),
+  verifyNuveiSignature,
   (req, res, next) => {
     // Convert raw body to JSON for Nuvei webhook handler
     if (req.body && typeof req.body === 'string') {
@@ -275,13 +278,12 @@ app.post(
         return next(new AppError('Invalid JSON in request body', 400));
       }
     }
-    // Import the function directly since we're using ES modules in the controller
-    import('./controllers/paymentController.js')
-      .then(controllerModule => {
-        const { handleNuveiWebhook } = controllerModule;
-        return handleNuveiWebhook(req, res, next);
-      })
-      .catch(err => next(err));
+    // Import the function dynamically since we're using ES modules
+    import('./controllers/nuveiPaymentController.js').then(({ handleNuveiWebhook }) => {
+      return handleNuveiWebhook(req, res, next);
+    }).catch(err => {
+      next(err);
+    });
   }
 );
 

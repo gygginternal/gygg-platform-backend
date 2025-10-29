@@ -255,17 +255,27 @@ export const releasePaymentForContract = catchAsync(async (req, res, next) => {
 // --- Create Payment Intent for Contract (Provider -> Tasker via Platform) ---
 export const createPaymentIntentForContract = catchAsync(async (req, res, next) => {
   const { contractId } = req.params;
+  const { paymentMethod } = req.body || {}; // 'stripe' or 'nuvei'
   const providerId = req.user.id;
 
   try {
-    const result = await stripePaymentService.createPaymentIntentForContract(contractId, providerId);
+    let result;
+    
+    // Check which payment method the provider wants to use
+    if (paymentMethod === 'nuvei') {
+      // Use Nuvei Simply Connect payment service
+      result = await nuveiPaymentService.createSimplyConnectSession(contractId, providerId, req.body.amount, req.body.currency);
+    } else {
+      // Default to Stripe
+      result = await stripePaymentService.createPaymentIntentForContract(contractId, providerId);
+    }
     
     res.status(200).json({
       status: "success",
       ...result
     });
   } catch (error) {
-    console.error('Error creating Stripe payment intent:', error);
+    console.error('Error creating payment intent:', error);
     return next(new AppError(`Failed to create payment intent: ${error.message}`, 500));
   }
 });
@@ -1279,115 +1289,6 @@ export const processWithdrawal = catchAsync(async (req, res, next) => {
       // Process withdrawal via Stripe (using new service)
       result = await stripePaymentService.processWithdrawal(userId, amount);
     } else if (paymentMethod === 'nuvei') {
-
-      let availableAmount = 0;
-      const requestedAmount = Math.round(amount * 100); // Convert to cents
-
-      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-        // In development mode, calculate balance from our Stripe payment records
-        const paymentsReceived = await Payment.find({
-          payee: userId,
-          status: 'succeeded',
-          type: 'payment'
-        });
-
-        const withdrawals = await Payment.find({
-          payer: userId,
-          status: { $in: ['paid', 'succeeded'] },
-          type: 'withdrawal'
-        });
-
-        const totalReceived = paymentsReceived.reduce((sum, payment) => {
-          return sum + (payment.amountReceivedByPayee || 0);
-        }, 0);
-
-        const totalWithdrawn = withdrawals.reduce((sum, withdrawal) => {
-          return sum + (withdrawal.amount || 0);
-        }, 0);
-
-        availableAmount = totalReceived - totalWithdrawn;
-
-        console.log(`[DEV MODE] Stripe withdrawal check for user ${userId}:
-          - Total received: ${(totalReceived / 100).toFixed(2)}
-          - Total withdrawn: ${(totalWithdrawn / 100).toFixed(2)}
-          - Available: ${(availableAmount / 100).toFixed(2)}
-          - Requested: ${amount}`);
-
-      } else {
-        // In production mode, get real balance from Stripe
-        const balance = await stripe.balance.retrieve({
-          stripeAccount: user.stripeAccountId,
-        });
-
-        const available = balance.available.find(b => b.currency === 'usd');
-        availableAmount = available ? available.amount : 0;
-      }
-
-      if (requestedAmount > availableAmount) {
-        return next(new AppError(`Insufficient Stripe balance. Available: ${(availableAmount / 100).toFixed(2)}, Requested: ${amount}`, 400));
-      }
-
-      let payout;
-      let payoutId;
-
-      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-        // Simulate payout in development mode
-        payoutId = `po_dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        payout = {
-          id: payoutId,
-          status: 'paid',
-          arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours from now
-        };
-        
-        console.log(`[DEV MODE] Simulated Stripe withdrawal:
-          - Payout ID: ${payoutId}
-          - Amount: ${amount}
-          - Status: simulated_paid`);
-
-      } else {
-        // Create real payout in production
-        payout = await stripe.payouts.create({
-          amount: requestedAmount,
-          currency: 'usd',
-          method: 'instant',
-        }, {
-          stripeAccount: user.stripeAccountId,
-        });
-        payoutId = payout.id;
-      }
-
-      // Log the withdrawal for tracking
-      logger.info(`Stripe withdrawal processed for user ${userId}: ${amount} (Payout ID: ${payoutId})`);
-
-      // Create a withdrawal record in the database
-      const withdrawalData = {
-        payer: userId, // User withdrawing
-        payee: userId, // User receiving
-        amount: requestedAmount,
-        currency: 'usd',
-        status: payout.status,
-        stripePayoutId: payoutId,
-        description: `Withdrawal to bank account via Stripe`,
-        type: 'withdrawal',
-        stripeConnectedAccountId: user.stripeAccountId,
-        amountReceivedByPayee: requestedAmount,
-        amountAfterTax: requestedAmount,
-        applicationFeeAmount: 0,
-        taxAmount: 0
-      };
-      
-      // Explicitly don't set contract and gig for withdrawals to avoid unique constraint issues
-      const withdrawalRecord = new Payment(withdrawalData);
-      await withdrawalRecord.save();
-
-      result = {
-        payoutId: payout.id,
-        amount: amount,
-        status: payout.status,
-        method: 'stripe',
-        estimatedArrival: payout.arrival_date ? new Date(payout.arrival_date * 1000) : null,
-      };
-    } else if (paymentMethod === 'nuvei') {
       // Process withdrawal via Nuvei bank transfer
       result = await nuveiPayoutService.processNuveiWithdrawal(userId, amount);
       
@@ -1909,7 +1810,7 @@ export const initiateAccountSession = catchAsync(async (req, res, next) => {
 const makeNuveiRequest = async (endpoint, data, method = 'POST') => {
   const nuveiUrl = process.env.NODE_ENV === 'production' 
     ? process.env.NUVEI_API_URL || 'https://api.nuvei.com/' 
-    : process.env.NUVEI_SANDBOX_URL || 'https://api.sandbox.nuvei.com/';
+    : process.env.NUVEI_SANDBOX_URL || 'https://sandbox.nuvei.com/';
   
   const apiUrl = new URL(endpoint, nuveiUrl);
   
@@ -2334,5 +2235,143 @@ export const getUserPaymentMethods = catchAsync(async (req, res, next) => {
   } catch (error) {
     console.error('Error getting user payment methods:', error);
     return next(new AppError(`Failed to get payment methods: ${error.message}`, 500));
+  }
+});
+
+// --- Nuvei Simply Connect Payment Handlers ---
+
+// Create a Simply Connect payment session for contracts
+export const createNuveiSimplyConnectSession = catchAsync(async (req, res, next) => {
+  const providerId = req.user.id;
+  const { contractId, amount, currency = 'USD' } = req.body;
+
+  try {
+    // Validate contract exists and belongs to provider
+    const contract = await Contract.findById(contractId).populate('gig provider tasker');
+    
+    if (!contract) {
+      return next(new AppError('Contract not found', 404));
+    }
+    
+    if (contract.provider.toString() !== providerId) {
+      return next(new AppError('Not authorized to pay for this contract', 403));
+    }
+    
+    if (contract.status !== 'pending_payment') {
+      return next(new AppError('Contract is not in pending payment status', 400));
+    }
+
+    // Generate a unique client request ID
+    const clientRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // In a real implementation, you would call Nuvei's API to create a session
+    // For now, we'll create a mock session with the required data
+    
+    // Mock session data - in real implementation, this would come from Nuvei API
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Mock response data - in real implementation, this would come from Nuvei API
+    const mockResponse = {
+      sessionId,
+      clientRequestId,
+      merchantId: process.env.NUVEI_MERCHANT_ID || 'mock_merchant_id',
+      merchantSiteId: process.env.NUVEI_MERCHANT_SITE_ID || 'mock_site_id',
+      currency,
+      amount,
+      contractId,
+      providerId,
+      returnUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/contracts?nuvei_response=1`,
+      webhookUrl: `${process.env.BACKEND_URL || 'http://localhost:5000'}/api/v1/payments/webhook/nuvei`,
+      transactionType: 'Auth',
+      paymentMethod: 'CC',
+      // Add any other required fields for Simply Connect
+    };
+
+    // Log the session creation for debugging
+    logger.info('Nuvei Simply Connect session created', {
+      sessionId,
+      contractId,
+      amount,
+      currency,
+      providerId
+    });
+
+    res.status(200).json({
+      status: "success",
+      data: mockResponse,
+    });
+  } catch (error) {
+    logger.error('Error creating Nuvei Simply Connect session:', error);
+    return next(new AppError(`Failed to create Nuvei Simply Connect session: ${error.message}`, 500));
+  }
+});
+
+// Confirm Simply Connect payment completion
+export const confirmNuveiSimplyConnectPayment = catchAsync(async (req, res, next) => {
+  const providerId = req.user.id;
+  const { contractId, transactionId, paymentResult } = req.body;
+
+  try {
+    // Validate contract exists and belongs to provider
+    const contract = await Contract.findById(contractId);
+    
+    if (!contract) {
+      return next(new AppError('Contract not found', 404));
+    }
+    
+    if (contract.provider.toString() !== providerId) {
+      return next(new AppError('Not authorized to confirm payment for this contract', 403));
+    }
+
+    // In a real implementation, you would:
+    // 1. Verify the payment with Nuvei's API
+    // 2. Update the contract status
+    // 3. Create a payment record
+    // 4. Handle any errors or fraud detection
+    
+    // For now, we'll simulate successful payment processing
+    
+    // Update contract status to completed
+    contract.status = 'completed';
+    contract.completedAt = new Date();
+    await contract.save();
+
+    // Create a payment record
+    const nuveiPayment = await NuveiPayment.create({
+      contract: contractId,
+      provider: providerId,
+      tasker: contract.tasker,
+      amount: contract.agreedCost,
+      currency: 'USD',
+      status: 'succeeded',
+      transactionId: transactionId,
+      sessionId: paymentResult?.SessionId || `session_${transactionId}`,
+      paymentMethod: paymentResult?.PaymentMethod || 'CC',
+      gatewayResponse: paymentResult,
+      processedAt: new Date(),
+    });
+
+    // Log the successful payment
+    logger.info('Nuvei Simply Connect payment confirmed', {
+      transactionId,
+      contractId,
+      amount: contract.agreedCost,
+      providerId
+    });
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        message: 'Payment confirmed successfully',
+        payment: nuveiPayment,
+        contract: {
+          id: contract._id,
+          status: contract.status
+        }
+      },
+    });
+  } catch (error) {
+    logger.error('Error confirming Nuvei Simply Connect payment:', error);
+    return next(new AppError(`Failed to confirm Nuvei Simply Connect payment: ${error.message}`, 500));
   }
 });

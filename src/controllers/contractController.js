@@ -311,20 +311,9 @@ export const submitWork = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
-  const provider = await User.findById(contract.provider._id || contract.provider);
+  // Check that tasker has connected their payment account (either Stripe or Nuvei)
+  // Note: Provider payment account is not required at submission time, but will be required at payment time
   const tasker = await User.findById(contract.tasker._id || contract.tasker);
-  
-  // Check if provider has either Stripe or Nuvei account connected
-  const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
-  if (!hasProviderPaymentMethod) {
-    return next(
-      new AppError(
-        "Provider must connect their payment account (Stripe or Nuvei) before work can be submitted.",
-        400
-      )
-    );
-  }
   
   // Check if tasker has either Stripe or Nuvei account connected
   const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
@@ -387,20 +376,10 @@ export const approveCompletionAndRelease = catchAsync(
       );
     }
 
-    // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
+    // Check that tasker has connected their payment account (either Stripe or Nuvei)
+    // Note: Provider payment account is not required at approval time, but will be required at payment time
     const provider = await User.findById(contract.provider._id || contract.provider);
     const tasker = await User.findById(contract.tasker._id || contract.tasker);
-    
-    // Check if provider has either Stripe or Nuvei account connected
-    const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
-    if (!hasProviderPaymentMethod) {
-      return next(
-        new AppError(
-          "Provider must connect their payment account (Stripe or Nuvei) before approving work.",
-          400
-        )
-      );
-    }
     
     // Check if tasker has either Stripe or Nuvei account connected
     const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
@@ -440,7 +419,7 @@ export const approveCompletionAndRelease = catchAsync(
     // Notify tasker that work has been approved and payment is pending
     await sendNotification({
       user: contract.tasker,
-      type: 'contract_approved',
+      type: 'work_approved',
       message: `Your work has been approved! Payment is pending.`,
       data: { contractId: contract._id, gigId: contract.gig },
       icon: 'contract.svg',
@@ -491,22 +470,9 @@ export const payTasker = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check that both provider and tasker have connected their payment accounts (either Stripe or Nuvei)
-  const provider = await User.findById(contract.provider._id || contract.provider);
-  const tasker = await User.findById(contract.tasker._id || contract.tasker);
-  
-  // Check if provider has either Stripe or Nuvei account connected
-  const hasProviderPaymentMethod = provider.stripeAccountId || provider.nuveiAccountId;
-  if (!hasProviderPaymentMethod) {
-    return next(
-      new AppError(
-        "Provider must connect their payment account (Stripe or Nuvei) before paying tasker.",
-        400
-      )
-    );
-  }
-  
   // Check if tasker has either Stripe or Nuvei account connected
+  // Note: Provider payment account is not required at this stage - they will choose payment method on payment screen
+  const tasker = await User.findById(contract.tasker._id || contract.tasker);
   const hasTaskerPaymentMethod = tasker.stripeAccountId || tasker.nuveiAccountId;
   if (!hasTaskerPaymentMethod) {
     return next(
@@ -517,6 +483,9 @@ export const payTasker = catchAsync(async (req, res, next) => {
     );
   }
 
+  // Instead of checking for provider payment accounts here, we'll allow them to proceed
+  // to the payment screen where they can choose their preferred payment method
+  
   let payment = await Payment.findOne({ contract: contractId });
 
   // Allow bypass in development/test environment for contracts without payment records

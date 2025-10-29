@@ -1,10 +1,10 @@
-import { body, param, query } from 'express-validator';
-import mongoose from 'mongoose';
+const { body, param, query } = require('express-validator');
+const mongoose = require('mongoose');
 
 /**
  * Common validation rules
  */
-export const commonValidations = {
+const commonValidations = {
   mongoId: (field = 'id') => 
     param(field).isMongoId().withMessage(`Invalid ${field} format`),
   
@@ -78,7 +78,7 @@ export const commonValidations = {
 /**
  * Create validation middleware for specific entities
  */
-export const createEntityValidation = {
+const createEntityValidation = {
   user: {
     create: [
       commonValidations.email(),
@@ -143,14 +143,14 @@ export const createEntityValidation = {
 /**
  * Custom validator to check if value is a valid MongoDB ObjectId
  */
-export const isValidObjectId = (value) => {
+const isValidObjectId = (value) => {
   return mongoose.Types.ObjectId.isValid(value);
 };
 
 /**
  * Sanitize and validate array fields
  */
-export const sanitizeArrayField = (value) => {
+const sanitizeArrayField = (value) => {
   if (typeof value === 'string') {
     return value.split(',').map(item => item.trim()).filter(item => item);
   }
@@ -163,7 +163,7 @@ export const sanitizeArrayField = (value) => {
 /**
  * Validate and parse JSON fields from form data
  */
-export const parseJsonField = (value, fieldName) => {
+const parseJsonField = (value, fieldName) => {
   if (typeof value === 'string') {
     try {
       const parsed = JSON.parse(value);
@@ -179,4 +179,12 @@ export const parseJsonField = (value, fieldName) => {
     return value;
   }
   throw new Error(`${fieldName} must be an object`);
+};
+
+module.exports = {
+  commonValidations,
+  createEntityValidation,
+  isValidObjectId,
+  sanitizeArrayField,
+  parseJsonField,
 };

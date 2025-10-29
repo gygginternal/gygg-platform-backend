@@ -1,9 +1,9 @@
-import fs from 'fs';
-import path from 'path';
-import PDFDocument from 'pdfkit';
+const fs = require('fs');
+const path = require('path');
+const PDFDocument = require('pdfkit');
 
 // Main function to generate and stream PDF with improved fee structure
-export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
+function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
   try {
     const doc = new PDFDocument({ margin: 50 });
     
@@ -174,3 +174,5 @@ export function generateInvoicePdf(invoiceData, res, userRole = 'tasker') {
     }
   }
 }
+
+module.exports = { generateInvoicePdf };

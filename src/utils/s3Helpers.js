@@ -8,7 +8,7 @@ import logger from './logger.js';
  * @param {string} bucketName - S3 bucket name (optional, uses env var if not provided)
  * @returns {Promise<void>}
  */
-export const deleteS3Object = async (key, bucketName = process.env.AWS_S3_BUCKET_NAME) => {
+const deleteS3Object = async (key, bucketName = process.env.AWS_S3_BUCKET_NAME) => {
   if (!key || key === 'default.jpg') {
     logger.debug(`deleteS3Object: No valid key or key is default. Key: ${key}`);
     return;
@@ -35,7 +35,7 @@ export const deleteS3Object = async (key, bucketName = process.env.AWS_S3_BUCKET
  * @param {string} bucketName - S3 bucket name (optional)
  * @returns {Promise<void>}
  */
-export const deleteMultipleS3Objects = async (keys, bucketName = process.env.AWS_S3_BUCKET_NAME) => {
+const deleteMultipleS3Objects = async (keys, bucketName = process.env.AWS_S3_BUCKET_NAME) => {
   const validKeys = keys.filter(key => key && key !== 'default.jpg');
   
   if (validKeys.length === 0) {
@@ -57,7 +57,7 @@ export const deleteMultipleS3Objects = async (keys, bucketName = process.env.AWS
  * @param {string} bucketName - S3 bucket name (optional)
  * @returns {Promise<void>}
  */
-export const cleanupS3Objects = async (objects, keyField = 'key', bucketName = process.env.AWS_S3_BUCKET_NAME) => {
+const cleanupS3Objects = async (objects, keyField = 'key', bucketName = process.env.AWS_S3_BUCKET_NAME) => {
   if (!Array.isArray(objects) || objects.length === 0) {
     return;
   }
@@ -67,4 +67,10 @@ export const cleanupS3Objects = async (objects, keyField = 'key', bucketName = p
     .filter(key => key && key !== 'default.jpg');
 
   await deleteMultipleS3Objects(keys, bucketName);
+};
+
+export {
+  deleteS3Object,
+  deleteMultipleS3Objects,
+  cleanupS3Objects,
 };

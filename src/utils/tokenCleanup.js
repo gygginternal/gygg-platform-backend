@@ -6,7 +6,7 @@ import logger from './logger.js';
  * Cleans up expired email verification and password reset tokens
  * This should be run periodically (e.g., every hour)
  */
-export const cleanupExpiredTokens = async () => {
+const cleanupExpiredTokens = async () => {
   try {
     const now = new Date();
     
@@ -60,7 +60,7 @@ export const cleanupExpiredTokens = async () => {
 /**
  * Starts the token cleanup job that runs every hour
  */
-export const startTokenCleanupJob = () => {
+const startTokenCleanupJob = () => {
   // Run cleanup after a short delay to ensure connection is ready
   setTimeout(() => {
     cleanupExpiredTokens().catch(error => {
@@ -81,4 +81,9 @@ export const startTokenCleanupJob = () => {
   }, 3600000); // 1 hour
   
   logger.info('Token cleanup job started - running every hour');
+};
+
+export {
+  cleanupExpiredTokens,
+  startTokenCleanupJob
 };
