@@ -54,6 +54,25 @@ export const createReview = catchAsync(async (req, res, next) => {
 
     await newReview.populate('reviewer', 'firstName lastName profileImage');
 
+    // Send notification to the reviewee (tasker) that they received a review
+    try {
+        await Notification.create({
+            user: contractDoc.tasker,
+            type: 'review_received',
+            message: `You received a ${rating}-star review from ${newReview.reviewer.firstName}!`,
+            data: { 
+                reviewId: newReview._id, 
+                contractId: contract, 
+                gigId: contractDoc.gig,
+                rating: rating
+            },
+            icon: 'star.svg',
+            link: `/gigs/${contractDoc.gig._id || contractDoc.gig}`,
+        });
+    } catch (notificationError) {
+        console.error('Failed to send review received notification:', notificationError);
+    }
+
     res.status(201).json({
         status: 'success',
         data: { review: newReview },

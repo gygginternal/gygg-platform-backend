@@ -90,6 +90,31 @@ export const acceptApplication = catchAsync(async (req, res, next) => {
   const contract = await Contract.create(contractData);
   logger.info(`acceptApplication: Contract ${contract._id} created successfully`);
 
+  // Send notifications to both provider and tasker
+  try {
+    // Notify tasker (applicant) that their application has been accepted
+    await Notification.create({ 
+      user: application.user._id, 
+      type: 'gig_accepted',
+      message: `Your application for gig "${gig.title}" has been accepted!`, 
+      data: { gigId: gig._id, applicationId: application._id, contractId: contract._id },
+      icon: 'check-circle.svg',
+      link: `/gigs/${gig._id}`
+    });
+
+    // Notify tasker that a contract has been created
+    await Notification.create({ 
+      user: application.user._id, 
+      type: 'contract_created',
+      message: `A contract has been created for gig "${gig.title}"!`, 
+      data: { gigId: gig._id, contractId: contract._id },
+      icon: 'document.svg',
+      link: `/contracts/${contract._id}`
+    });
+  } catch (notificationError) {
+    logger.error('Failed to send application acceptance notifications:', notificationError);
+  }
+
   // Emit WebSocket events to notify connected clients
   const chatWebsocket = getChatWebsocket();
   if (chatWebsocket) {

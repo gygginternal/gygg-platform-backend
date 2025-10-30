@@ -6,10 +6,37 @@ import notifyAdmin from '../utils/notifyAdmin.js';
 
 // Get all notifications for the logged-in user
 export const getNotifications = catchAsync(async (req, res, next) => {
+  // Parse pagination parameters
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const skip = (page - 1) * limit;
+  
+  // Get notifications for the user
   const notifications = await Notification.find({ user: req.user.id })
     .sort({ createdAt: -1 })
-    .limit(100);
-  res.status(200).json({ status: 'success', data: { notifications } });
+    .skip(skip)
+    .limit(limit);
+  
+  // Get total count for pagination
+  const total = await Notification.countDocuments({ user: req.user.id });
+  const unreadCount = await Notification.countDocuments({ user: req.user.id, isRead: false });
+  
+  // Calculate pagination info
+  const hasMore = skip + notifications.length < total;
+  
+  res.status(200).json({ 
+    status: 'success', 
+    data: { 
+      notifications,
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore
+      },
+      unreadCount
+    } 
+  });
 });
 
 // Get a specific notification by ID

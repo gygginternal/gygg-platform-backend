@@ -612,6 +612,31 @@ export const payTasker = catchAsync(async (req, res, next) => {
     `Contract ${contract._id} marked as completed by Provider ${userId}. Payout released to tasker.`
   );
 
+  // Notify both provider and tasker that the gig is completed
+  try {
+    // Notify provider
+    await sendNotification({
+      user: contract.provider,
+      type: 'gig_completed',
+      message: `Gig "${(contract.gig && contract.gig.title) || 'N/A'}" has been completed!`,
+      data: { contractId: contract._id, gigId: contract.gig },
+      icon: 'check-circle.svg',
+      link: `/contracts/${contract._id}`,
+    });
+
+    // Notify tasker
+    await sendNotification({
+      user: contract.tasker,
+      type: 'gig_completed',
+      message: `Gig "${(contract.gig && contract.gig.title) || 'N/A'}" has been completed! Payment has been processed.`,
+      data: { contractId: contract._id, gigId: contract.gig },
+      icon: 'check-circle.svg',
+      link: `/contracts/${contract._id}`,
+    });
+  } catch (notificationError) {
+    console.error('Failed to send gig completion notifications:', notificationError);
+  }
+
   // Notify tasker of payment received
   await sendNotification({
     user: contract.tasker,
