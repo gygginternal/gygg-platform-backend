@@ -22,8 +22,8 @@ export const initializeChatWebsocket = (server) => {
     },
     transports: ["websocket", "polling"],
     allowEIO3: true,
-    pingTimeout: 60000,
-    pingInterval: 25000,
+    pingTimeout: 90000, // Increase to 90 seconds to reduce disconnections
+    pingInterval: 30000, // Increase to 30 seconds to reduce traffic
     // Enhanced security settings
     maxHttpBufferSize: 1e6, // 1MB max message size
     connectTimeout: 45000, // 45 second timeout
@@ -214,14 +214,33 @@ export const initializeChatWebsocket = (server) => {
       logger.debug(`Socket ${socket.id} left room: ${sanitizedRoom}`);
     });
 
+    // Set up periodic ping/pong to maintain connection health
+    const heartbeatInterval = setInterval(() => {
+      if (socket.connected) {
+        socket.emit('ping'); // Send ping to client
+      } else {
+        clearInterval(heartbeatInterval); // Stop if socket disconnected
+      }
+    }, 25000); // Every 25 seconds
+
+    // Listen for pong responses from client
+    socket.on('pong', () => {
+      // Client responded, connection is healthy
+      logger.debug(`Heartbeat response received from ${socket.id}`);
+    });
+
     // Handle disconnection
-    socket.on("disconnect", () => {
-      logger.debug(`Client disconnected: ${socket.id}`);
+    socket.on("disconnect", (reason) => {
+      logger.info(`Client disconnected: ${socket.id}, Reason: ${reason}`);
+
+      // Clear heartbeat interval
+      clearInterval(heartbeatInterval);
 
       // Remove user from mapping
       for (const [userId, socketData] of userSockets.entries()) {
         if (socketData.socketId === socket.id) {
           userSockets.delete(userId);
+          logger.debug(`Removed socket mapping for user ${userId}`);
           break;
         }
       }

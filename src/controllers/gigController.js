@@ -199,14 +199,6 @@ export const getAllGigs = catchAsync(async (req, res, next) => {
   
   pipeline.push({ $unwind: "$providerInfo" });
   
-  // Filter by provider payment status
-  pipeline.push({
-    $match: {
-      "providerInfo.stripeAccountId": { $exists: true },
-      "providerInfo.stripeChargesEnabled": true
-    }
-  });
-  
   // Sort by text score (if search was performed) and then by creation date
   if (req.query.search && req.query.search.trim() !== "") {
     pipeline.push({ $sort: { score: { $meta: "textScore" }, createdAt: -1 } });
