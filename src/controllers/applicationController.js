@@ -305,15 +305,17 @@ export const getMyAppliedGigs = catchAsync(async (req, res, next) => {
   const user = req.user;
   const { status = 'all', page = 1, limit = 10 } = req.query;
 
-  // Build query filter
+  // Build query filter - only fetch pending and rejected applications
   let query = { user: user._id };
   
   if (status !== 'all') {
-    query.status = status;
+    // Only allow pending and rejected statuses
+    if (['pending', 'rejected'].includes(status)) {
+      query.status = status;
+    }
   } else {
-    // By default, exclude 'accepted' applications since they become contracts
-    // Only show applications that are still in application status
-    query.status = { $ne: 'accepted' };
+    // By default, only show pending and rejected applications
+    query.status = { $in: ['pending', 'rejected'] };
   }
 
   // Get applications with pagination
