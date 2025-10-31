@@ -858,8 +858,12 @@ export const getApplicationsForGig = catchAsync(async (req, res, next) => {
   }
   
   // Get all applications for this gig, sorted by creation date
+  // Include location (address), ratings, and other relevant user information
   const applications = await Application.find({ gig: gigId })
-    .populate('user', 'firstName lastName email profileImage')
+    .populate({
+      path: 'user',
+      select: 'firstName lastName email profileImage bio rating ratingCount address skills hobbies'
+    })
     .sort({ createdAt: -1 });
   
   logger.info(`getApplicationsForGig: Retrieved ${applications.length} applications for gig ${gigId}`);
