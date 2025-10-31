@@ -116,7 +116,12 @@ router.use(protect);
 // Get all gigs (any logged-in user) OR create a gig (only provider)
 router.get(
   "/awaiting-posted-gig",
-  restrictTo("provider"), // Only providers can access this route
+  [
+    restrictTo("provider"), // Only providers can access this route
+    query("page").optional().isInt({ min: 1 }).toInt(),
+    query("limit").optional().isInt({ min: 1, max: 50 }).toInt(),
+  ],
+  validateRequest,
   getMyGigsWithNoApplications // Calls the controller to handle the request
 );
 

@@ -690,15 +690,23 @@ export const getMyGigsWithNoApplications = catchAsync(
   async (req, res, next) => {
     const userId = req.user._id; // Logged-in user's ID
     
+    // Extract pagination parameters
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+    
     // Debug logging
     logger.debug('Fetching gigs with no applications for user:', { 
       userId: userId.toString(),
       userType: typeof userId,
-      userRole: req.user.role
+      userRole: req.user.role,
+      page,
+      limit,
+      skip
     });
 
-    // Find gigs posted by the user
-    const gigs = await Gig.aggregate([
+    // Build the pipeline with pagination
+    const pipeline = [
       {
         $match: {
           postedBy: userId, // Match gigs posted by the logged-in user
@@ -716,43 +724,61 @@ export const getMyGigsWithNoApplications = catchAsync(
       {
         $sort: { createdAt: -1 }, // Sort by creation date (most recent first)
       },
+      // Count total results for pagination
       {
-        $project: {
-          _id: "$_id", // Use MongoDB's _id as the _id
-          title: 1,
-          category: 1,
-          cost: 1,
-          isHourly: 1,
-          ratePerHour: 1,
-          estimatedHours: 1,
-          location: {
-            $cond: {
-              if: { $and: [
-                { $ne: ["$location.city", null] },
-                { $ne: ["$location.state", null] }
-              ]},
-              then: { $concat: ["$location.city", ", ", "$location.state"] },
-              else: {
-                $cond: {
-                  if: { $ne: ["$location.city", null] },
-                  then: "$location.city",
-                  else: {
-                    $cond: {
-                      if: { $ne: ["$location.state", null] },
-                      then: "$location.state",
-                      else: null
+        $facet: {
+          "gigs": [
+            { $skip: skip },
+            { $limit: limit },
+            {
+              $project: {
+                _id: "$_id", // Use MongoDB's _id as the _id
+                title: 1,
+                category: 1,
+                cost: 1,
+                isHourly: 1,
+                ratePerHour: 1,
+                estimatedHours: 1,
+                location: {
+                  $cond: {
+                    if: { $and: [
+                      { $ne: ["$location.city", null] },
+                      { $ne: ["$location.state", null] }
+                    ]},
+                    then: { $concat: ["$location.city", ", ", "$location.state"] },
+                    else: {
+                      $cond: {
+                        if: { $ne: ["$location.city", null] },
+                        then: "$location.city",
+                        else: {
+                          $cond: {
+                            if: { $ne: ["$location.state", null] },
+                            then: "$location.state",
+                            else: null
+                          }
+                        }
+                      }
                     }
                   }
-                }
-              }
+                },
+                description: 1,
+                createdAt: 1,
+                applicationCount: { $size: "$applications" }, // Add application count
+              },
             }
-          },
-          description: 1,
-          createdAt: 1,
-          applicationCount: { $size: "$applications" }, // Add application count
-        },
-      },
-    ]);
+          ],
+          "total": [
+            { $count: "count" }
+          ]
+        }
+      }
+    ];
+
+    const result = await Gig.aggregate(pipeline);
+    
+    const gigs = result[0].gigs;
+    const total = result[0].total[0] ? result[0].total[0].count : 0;
+    const totalPages = Math.ceil(total / limit);
 
     res.status(200).json({
       status: "success",
@@ -760,6 +786,10 @@ export const getMyGigsWithNoApplications = catchAsync(
       data: {
         gigs,
       },
+      total,
+      page,
+      totalPages,
+      hasMore: page < totalPages
     });
   }
 );
